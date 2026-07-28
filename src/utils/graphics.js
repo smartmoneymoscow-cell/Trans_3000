@@ -8,8 +8,8 @@ const images = {}
 let imagesLoaded = false
 
 const IMAGE_SOURCES = {
-  car: '/assets/car.svg',
-  canister: '/assets/canister.svg',
+  car: `${import.meta.env.BASE_URL}assets/car.svg`,
+  canister: `${import.meta.env.BASE_URL}assets/canister.svg`,
 }
 
 export function preloadImages() {

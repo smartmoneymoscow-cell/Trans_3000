@@ -229,12 +229,14 @@ html, body {
 }
 
 /* ── Play screen ── */
-.play-screen {
+.play-screen,
+.playing-screen {
   background: var(--bg);
 }
 
 /* HUD */
-.hud {
+.hud,
+.hud-top {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -251,7 +253,7 @@ html, body {
   gap: 12px;
 }
 
-.hud-score, .hud-count {
+.hud-score, .hud-count, .score-display {
   text-align: center;
 }
 
@@ -264,13 +266,13 @@ html, body {
   margin-bottom: 2px;
 }
 
-.hud-value {
+.hud-value, .score-display {
   font-size: 24px;
   font-weight: 900;
   color: var(--accent);
 }
 
-.hud-streak {
+.hud-streak, .streak-display {
   font-size: 14px;
   font-weight: 700;
   color: #f97316;
