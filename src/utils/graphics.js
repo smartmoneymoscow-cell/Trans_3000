@@ -164,30 +164,34 @@ export function drawAnimatedHose(ctx, landmarks, time, state, suctionStrength, t
   let hoseEnd, hoseStart
 
   if (state === 'mouth') {
-    hoseEnd = { x: mouthCx + tiltInfluence + 80, y: mouthCy + H * 0.25 }
-    hoseStart = mouthPos
+    // Hose goes FROM car fuel cap TO mouth
+    hoseStart = { x: carPos.x, y: carPos.y }
+    hoseEnd = { x: mouthCx, y: mouthCy }
   } else if (state === 'disconnecting') {
+    // Hose swings from car fuel cap to canister
     const t = (Math.sin(time * 0.003) + 1) / 2
+    hoseStart = {
+      x: carPos.x + (canisterPos.x - carPos.x) * t,
+      y: carPos.y + (canisterPos.y - carPos.y) * t,
+    }
     hoseEnd = {
       x: mouthCx + (canisterPos.x - mouthCx) * t,
       y: mouthCy + (canisterPos.y - mouthCy) * t,
     }
-    hoseStart = {
-      x: mouthPos.x + (canisterPos.x - mouthPos.x) * (t * 0.3),
-      y: mouthPos.y + (canisterPos.y - mouthPos.y) * (t * 0.3),
-    }
   } else if (state === 'transferring') {
-    hoseStart = { x: canisterPos.x - 20, y: canisterPos.y - 10 }
-    hoseEnd = { x: canisterPos.x + 15, y: canisterPos.y }
+    // Hose connected from car to canister
+    hoseStart = { x: carPos.x, y: carPos.y }
+    hoseEnd = { x: canisterPos.x, y: canisterPos.y }
   } else if (state === 'reconnecting') {
+    // Hose swings from canister back to car fuel cap
     const t = (Math.sin(time * 0.003 + Math.PI) + 1) / 2
-    hoseEnd = {
-      x: canisterPos.x + (mouthCx - canisterPos.x) * t,
-      y: canisterPos.y + (mouthCy - canisterPos.y) * t,
-    }
     hoseStart = {
-      x: canisterPos.x + (mouthPos.x - canisterPos.x) * (t * 0.3),
-      y: canisterPos.y + (mouthPos.y - canisterPos.y) * (t * 0.3),
+      x: canisterPos.x + (carPos.x - canisterPos.x) * t,
+      y: canisterPos.y + (carPos.y - canisterPos.y) * t,
+    }
+    hoseEnd = {
+      x: mouthCx + (carPos.x - mouthCx) * t,
+      y: mouthCy + (carPos.y - mouthCy) * t,
     }
   }
 
