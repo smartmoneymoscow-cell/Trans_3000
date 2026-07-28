@@ -44,6 +44,9 @@ async function acquireCamera() {
 
   // 2. Check API availability
   if (!diag.hasMediaDevices) {
+    if (diag.isIOS) {
+      throw new Error('CAMERA_IOS_NOT_SUPPORTED')
+    }
     throw new Error('CAMERA_API_UNAVAILABLE')
   }
 
@@ -221,6 +224,13 @@ export default function App() {
         canRetry: false,
         openExternal: diag.isIOS,
       },
+      CAMERA_IOS_NOT_SUPPORTED: {
+        icon: '📱',
+        title: 'Камера не поддерживается',
+        text: 'На iPhone камера не работает внутри Telegram. Откройте игру в Safari.',
+        canRetry: false,
+        openExternal: true,
+      },
       CAMERA_DENIED: {
         icon: '🚫',
         title: 'Доступ к камере запрещён',
@@ -243,7 +253,7 @@ export default function App() {
 
     // Match known errors or use generic
     for (const [key, val] of Object.entries(errors)) {
-      if (errorType === key) return { ...val, openExternal: val.openExternal ?? diag.isIOS }
+      if (errorType === key) return val
     }
 
     return {
