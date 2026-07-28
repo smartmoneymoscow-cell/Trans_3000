@@ -76,6 +76,9 @@ export default function App() {
   const streamRef = useRef(null)
   const landmarkerRef = useRef(null)
   const animRef = useRef(null)
+  // Floating +points drawn on canvas near the face
+  const floatingPointsRef = useRef([])
+
   const stateRef = useRef({
     oStartTime: 0,
     lastScoreTime: 0,
@@ -83,6 +86,7 @@ export default function App() {
     streak: 0,
     score: 0,
     totalInhales: 0,
+    faceCenter: { x: 0.5, y: 0.35 }, // normalized face center
   })
 
   // Init Telegram
@@ -218,6 +222,20 @@ export default function App() {
             const landmarks = result?.faceLandmarks?.[0]
             const blendshapes = result?.faceBlendshapes?.[0]?.categories
 
+            // Track face center for floating points positioning
+            if (landmarks) {
+              const nose = landmarks[1]
+              const forehead = landmarks[10]
+              if (nose && forehead) {
+                // Use original (non-mirrored) landmarks for position
+                // since canvas is already mirrored
+                stateRef.current.faceCenter = {
+                  x: 1 - (nose.x + forehead.x) / 2,
+                  y: (nose.y + forehead.y) / 2 - 0.08,
+                }
+              }
+            }
+
             if (landmarks) {
               // Mirror landmarks for display
               const mirrored = landmarks.map(l => ({ x: 1 - l.x, y: l.y, z: l.z }))
@@ -278,6 +296,16 @@ export default function App() {
                   // Reset hold for next detection
                   stateRef.current.oStartTime = time + COOLDOWN
                   spawnConfetti()
+
+                  // Spawn floating +points near the head
+                  floatingPointsRef.current.push({
+                    x: stateRef.current.faceCenter.x + (Math.random() - 0.5) * 0.08,
+                    y: stateRef.current.faceCenter.y,
+                    text: `+${points}`,
+                    born: time,
+                    duration: 1200,
+                    color: streak >= BONUS_THRESHOLD ? '#f97316' : '#4ade80',
+                  })
                 }
               } else {
                 if (stateRef.current.holding) {
@@ -289,6 +317,33 @@ export default function App() {
               }
             }
           } catch (e) { /* skip frame */ }
+
+          // Draw floating +points on canvas
+          const fps = floatingPointsRef.current
+          for (let i = fps.length - 1; i >= 0; i--) {
+            const fp = fps[i]
+            const age = time - fp.born
+            if (age > fp.duration) {
+              fps.splice(i, 1)
+              continue
+            }
+            const progress = age / fp.duration
+            const x = fp.x * canvas.width
+            const y = fp.y * canvas.height - progress * 80 // float up
+            const alpha = 1 - progress * progress // ease-out fade
+            const scale = 1 + progress * 0.4
+
+            ctx.save()
+            ctx.globalAlpha = alpha
+            ctx.font = `bold ${Math.round(28 * scale)}px -apple-system, sans-serif`
+            ctx.textAlign = 'center'
+            ctx.fillStyle = fp.color
+            ctx.shadowColor = fp.color
+            ctx.shadowBlur = 12
+            ctx.fillText(fp.text, x, y)
+            ctx.shadowBlur = 0
+            ctx.restore()
+          }
         }
 
         animRef.current = requestAnimationFrame(loop)
