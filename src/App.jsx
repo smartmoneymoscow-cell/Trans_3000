@@ -11,8 +11,11 @@ const tg = window.Telegram?.WebApp
 // ── Game config ──
 const ROUND_DURATION = 60
 const HOLD_THRESHOLD = 600
-const CANISTER_CAPACITY = 10 // number of inhales to fill canister
-const SUCTION_PER_INHALE = 1 // canister gain per scored inhale
+const CYCLE_CAPACITY = 10 // fill points per transfer cycle (5 strong or 10 weak)
+const STRONG_SUCTION_THRESHOLD = 50 // suction > 50 = strong inhale
+const STRONG_INHALE_VALUE = 2 // strong inhale = 2 fill points
+const WEAK_INHALE_VALUE = 1 // weak inhale = 1 fill point
+const CANISTER_CYCLES = 4 // transfers needed to fill the big canister
 const TRANSFER_DURATION = 3000 // ms for fluid transfer animation
 const DISCONNECT_DURATION = 1500 // ms for hose disconnect animation
 const RECONNECT_DURATION = 1500 // ms for hose reconnect animation
@@ -33,7 +36,8 @@ export default function App() {
   const [isActive, setIsActive] = useState(false)
   const [oShape, setOShape] = useState(0)
   const [suction, setSuction] = useState(0)
-  const [canisterFill, setCanisterFill] = useState(0)
+  const [cycleFill, setCycleFill] = useState(0) // 0-100 current transfer cycle
+  const [canisterCycles, setCanisterCycles] = useState(0) // 0-4 completed transfers
   const [hoseState, setHoseState] = useState('mouth') // mouth | disconnecting | transferring | reconnecting
   const [bonusText, setBonusText] = useState(null)
   const [confetti, setConfetti] = useState([])
@@ -51,7 +55,8 @@ export default function App() {
 
   const gs = useRef({
     cycleState: 'sucking', // sucking | full | disconnecting | transferring | reconnecting
-    canisterLevel: 0,
+    cycleLevel: 0, // 0..CYCLE_CAPACITY
+    canisterCycles: 0, // 0..CANISTER_CYCLES completed transfers
     cycleStartTime: 0,
     oStartTime: 0,
     lastScoreTime: 0,
@@ -125,11 +130,12 @@ export default function App() {
 
       setScore(0); setTimer(ROUND_DURATION); setStreak(0); setMaxStreak(0)
       setTotalCount(0); setIsO(false); setIsSucking(false); setIsActive(false)
-      setOShape(0); setSuction(0); setCanisterFill(0); setHoseState('mouth')
+      setOShape(0); setSuction(0); setCycleFill(0); setCanisterCycles(0); setHoseState('mouth')
 
       gs.current = {
         cycleState: 'sucking',
-        canisterLevel: 0,
+        cycleLevel: 0,
+        canisterCycles: 0,
         cycleStartTime: 0,
         oStartTime: 0,
         lastScoreTime: 0,
@@ -190,8 +196,9 @@ export default function App() {
           const carCap = drawCar(ctx, W, H, time)
           targetsRef.current.car = carCap
 
-          // Canister (left side)
-          const canisterPort = drawCanister(ctx, W, H, gs.current.canisterLevel, time)
+          // Canister (left side) — fill level = cycles completed / total
+          const canisterPct = (gs.current.canisterCycles / CANISTER_CYCLES) * 100
+          const canisterPort = drawCanister(ctx, W, H, canisterPct, time)
           targetsRef.current.canister = canisterPort
 
           try {
@@ -266,23 +273,25 @@ export default function App() {
                     color: g.streak >= 5 ? '#f97316' : '#4ade80',
                   })
 
-                  // Fill canister per inhale
-                  g.canisterLevel = Math.min(CANISTER_CAPACITY, g.canisterLevel + SUCTION_PER_INHALE)
-                  setCanisterFill(Math.round((g.canisterLevel / CANISTER_CAPACITY) * 100))
+                  // Fill cycle: strong inhale = 2 pts, weak = 1 pt
+                  const isStrong = g.suctionSmoothed >= STRONG_SUCTION_THRESHOLD
+                  const fillValue = isStrong ? STRONG_INHALE_VALUE : WEAK_INHALE_VALUE
+                  g.cycleLevel = Math.min(CYCLE_CAPACITY, g.cycleLevel + fillValue)
+                  setCycleFill(Math.round((g.cycleLevel / CYCLE_CAPACITY) * 100))
+                  if (isStrong) showBonus('💪 СИЛЬНЫЙ ВДОХ!')
                 }
               } else {
                 if (g.holding) { g.holding = false; g.streak = 0; setStreak(0) }
               }
 
-              // Canister full → transition
-              if (g.canisterLevel >= CANISTER_CAPACITY) {
+              // Cycle full → transfer
+              if (g.cycleLevel >= CYCLE_CAPACITY) {
                 g.cycleState = 'disconnecting'
                 g.cycleStartTime = time
                 setHoseState('disconnecting')
                 playDisconnectSound()
-                playCanisterFullSound()
                 if (tg) tg.HapticFeedback.impactOccurred('heavy')
-                showBonus('🛢️ КАНИСТРА ПОЛНА!')
+                showBonus('⛽ ПЕРЕЛИВ!')
               }
 
             } else if (g.cycleState === 'disconnecting') {
@@ -309,15 +318,40 @@ export default function App() {
                 drawFaceMesh(ctx, mirrored, time)
               }
 
-              // Animate canister draining back (visual: fluid settling)
               const transferProgress = (time - g.cycleStartTime) / TRANSFER_DURATION
               if (transferProgress >= 1) {
+                // Transfer complete → increment canister cycles
+                g.canisterCycles++
+                g.cycleLevel = 0
+                setCanisterCycles(g.canisterCycles)
+                setCycleFill(0)
+
+                if (g.canisterCycles >= CANISTER_CYCLES) {
+                  // WIN! Big canister full
+                  showBonus('🏆 КАНИСТРА ПОЛНА! ПОБЕДА!')
+                  playCanisterFullSound()
+                  if (tg) tg.HapticFeedback.notificationOccurred('success')
+                  g.score += 100 // bonus for completing
+                  setScore(g.score)
+                  // End game
+                  setTimeout(() => {
+                    setPhase('result')
+                    cleanup()
+                    const finalScore = g.score
+                    if (finalScore > highScore) {
+                      setHighScore(finalScore)
+                      try { localStorage.setItem('o-face-highscore', String(finalScore)) } catch {}
+                    }
+                    if (tg) tg.MainButton.setParams({ text: `Сыграть ещё (${finalScore} очков)`, is_visible: true })
+                  }, 2000)
+                  return
+                }
+
                 g.cycleState = 'reconnecting'
                 g.cycleStartTime = time
-                g.canisterLevel = 0
-                setCanisterFill(0)
                 setHoseState('reconnecting')
                 playConnectSound()
+                showBonus(`🛢️ ${g.canisterCycles}/${CANISTER_CYCLES}`)
               }
 
             } else if (g.cycleState === 'reconnecting') {
@@ -438,8 +472,9 @@ export default function App() {
               <div className="rule"><span className="rule-icon">📸</span><span>Включи камеру</span></div>
               <div className="rule"><span className="rule-icon">😮</span><span>Сделай букву О ртом</span></div>
               <div className="rule"><span className="rule-icon">💨</span><span>Втяни воздух — щёки вжимаются</span></div>
-              <div className="rule"><span className="rule-icon">⛽</span><span>Заполни канистру бензином</span></div>
-              <div className="rule"><span className="rule-icon">🛢️</span><span>Канистра полна → перелив в машину</span></div>
+              <div className="rule"><span className="rule-icon">💪</span><span>Сильный вдох = 2 очка, слабый = 1</span></div>
+              <div className="rule"><span className="rule-icon">⛽</span><span>10 очков → перелив в канистру</span></div>
+              <div className="rule"><span className="rule-icon">🛢️</span><span>4 перелива → канистра полна!</span></div>
             </div>
 
             {highScore > 0 && (
@@ -506,7 +541,7 @@ export default function App() {
                   <circle cx="40" cy="40" r="36" fill="none"
                     stroke={isActive ? '#4ade80' : isO ? '#fbbf24' : '#666'}
                     strokeWidth="4"
-                    strokeDasharray={`${(canisterFill / 100) * 2 * Math.PI * 36} ${2 * Math.PI * 36}`}
+                    strokeDasharray={`${(cycleFill / 100) * 2 * Math.PI * 36} ${2 * Math.PI * 36}`}
                     strokeLinecap="round"
                     transform="rotate(-90 40 40)"
                     style={{ transition: 'stroke-dasharray 0.15s ease, stroke 0.2s ease' }}
@@ -514,17 +549,29 @@ export default function App() {
                 </svg>
                 <span className="o-letter">О</span>
               </div>
-              {isActive && <span className="o-label">ВДОХ!</span>}
+              {isActive && suction >= STRONG_SUCTION_THRESHOLD && <span className="o-label strong">💪 СИЛЬНЫЙ!</span>}
+              {isActive && suction < STRONG_SUCTION_THRESHOLD && <span className="o-label">ВДОХ!</span>}
               {isO && !isSucking && <span className="o-label warn">ВТЯНИ ВОЗДУХ!</span>}
             </div>
 
-            {/* Canister fill bar */}
+            {/* Cycle fill bar (per transfer) */}
             <div className="canister-bar">
-              <div className="canister-bar-label">🛢️ КАНИСТРА</div>
+              <div className="canister-bar-label">⛽ ПЕРЕЛИВ</div>
               <div className="canister-bar-track">
-                <div className="canister-bar-fill" style={{ width: `${canisterFill}%` }} />
+                <div className="canister-bar-fill" style={{ width: `${cycleFill}%` }} />
               </div>
-              <div className="canister-bar-pct">{canisterFill}%</div>
+              <div className="canister-bar-pct">{cycleFill}%</div>
+            </div>
+
+            {/* Big canister progress (4 cycles) */}
+            <div className="big-canister-bar">
+              <div className="big-canister-label">🛢️ КАНИСТРА</div>
+              <div className="big-canister-dots">
+                {Array.from({ length: CANISTER_CYCLES }, (_, i) => (
+                  <div key={i} className={`big-canister-dot ${i < canisterCycles ? 'filled' : ''}`} />
+                ))}
+              </div>
+              <div className="big-canister-count">{canisterCycles}/{CANISTER_CYCLES}</div>
             </div>
 
             {/* Dual meters */}
@@ -561,7 +608,7 @@ export default function App() {
             {score > highScore && score > 0 && <div className="new-record">🎉 Новый рекорд!</div>}
             <div className="result-stats">
               <div className="stat"><span className="stat-value">{totalCount}</span><span className="stat-label">вдохов</span></div>
-              <div className="stat"><span className="stat-value">{maxStreak}</span><span className="stat-label">макс. серия</span></div>
+              <div className="stat"><span className="stat-value">{canisterCycles}/{CANISTER_CYCLES}</span><span className="stat-label">переливов</span></div>
               <div className="stat"><span className="stat-value">🏆 {Math.max(score, highScore)}</span><span className="stat-label">рекорд</span></div>
             </div>
             <button className="btn-play" onClick={() => { if (tg) tg.MainButton.hide(); setPhase('menu') }}>

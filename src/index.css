@@ -378,6 +378,10 @@ html, body {
   color: var(--warning);
 }
 
+.o-label.strong {
+  color: #a855f7;
+}
+
 @keyframes pulse-label {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.6; }
@@ -439,6 +443,59 @@ html, body {
   font-weight: 900;
   color: #fbbf24;
   min-width: 35px;
+  text-align: right;
+}
+
+/* Big canister progress (4 dots) */
+.big-canister-bar {
+  position: absolute;
+  top: 100px;
+  left: 12px;
+  right: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(8px);
+  border-radius: 8px;
+  padding: 6px 12px;
+}
+
+.big-canister-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.7);
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.big-canister-dots {
+  display: flex;
+  gap: 6px;
+  flex: 1;
+  justify-content: center;
+}
+
+.big-canister-dot {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.1);
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  transition: all 0.3s ease;
+}
+
+.big-canister-dot.filled {
+  background: linear-gradient(135deg, #f97316, #fbbf24);
+  border-color: #fbbf24;
+  box-shadow: 0 0 8px rgba(249, 115, 22, 0.5);
+}
+
+.big-canister-count {
+  font-size: 13px;
+  font-weight: 900;
+  color: #fbbf24;
+  min-width: 25px;
   text-align: right;
 }
 
