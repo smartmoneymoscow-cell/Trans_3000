@@ -138,12 +138,12 @@ export function detectOMouth(blendshapes) {
 
   // ── 1. O-SHAPE detection ──
   const oRaw = (jawOpen * 0.35) + (mouthFunnel * 0.35) + (mouthPucker * 0.15) - (smileAvg * 0.25)
-  const oShapeOk = jawOpen > 0.08 && (mouthFunnel > 0.06 || mouthPucker > 0.08) && smileAvg < 0.5
+  const oShapeOk = jawOpen > 0.12 && (mouthFunnel > 0.10 || mouthPucker > 0.12) && smileAvg < 0.4
   const oShape = Math.round(Math.min(100, Math.max(0, oRaw * 220)))
 
   // ── 2. SUCTION detection ──
-  const suctionRaw = suckAvg * 0.7 + (cheekPuff < 0.20 ? 0.15 : 0) + (mouthFunnel > 0.10 && suckAvg > 0.03 ? 0.15 : 0)
-  const isSucking = suckAvg > 0.04 && cheekPuff < 0.4
+  const suctionRaw = suckAvg * 0.7 + (cheekPuff < 0.15 ? 0.15 : 0) + (mouthFunnel > 0.15 && suckAvg > 0.05 ? 0.15 : 0)
+  const isSucking = suckAvg > 0.08 && cheekPuff < 0.3
   const suction = Math.round(Math.min(100, Math.max(0, suctionRaw * 250)))
 
   // ── Combined: both O-shape AND suction → active/scorable ──

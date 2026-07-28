@@ -31,14 +31,11 @@ export function drawCar(ctx, canvasW, canvasH, time) {
   const img = images.car
   if (!img) return { x: canvasW * 0.82, y: canvasH * 0.45 }
 
-  // Scale car to fit right side, cropped — show rear quarter only
-  const targetH = canvasH * 0.65
-  const scale = targetH / img.height
+  const scale = Math.min(canvasW / 500, canvasH / 350) * 0.85
   const w = img.width * scale
   const h = img.height * scale
-  // Position: right edge of car at canvas right edge + small overflow
-  const x = canvasW - w * 0.65
-  const y = canvasH * 0.18
+  const x = canvasW - w + 30
+  const y = canvasH * 0.28
 
   ctx.save()
   ctx.drawImage(img, x, y, w, h)
@@ -69,14 +66,11 @@ export function drawCanister(ctx, canvasW, canvasH, fillPct, time) {
   const img = images.canister
   if (!img) return { x: canvasW * 0.15, y: canvasH * 0.5 }
 
-  // Scale canister to be visible but not overlapping face
-  const targetH = canvasH * 0.35
-  const scale = targetH / img.height
+  const scale = Math.min(canvasW / 200, canvasH / 300) * 0.65
   const w = img.width * scale
   const h = img.height * scale
-  // Position: left side, below center
-  const x = canvasW * 0.02
-  const y = canvasH * 0.45
+  const x = canvasW * 0.04
+  const y = canvasH * 0.32
 
   ctx.save()
   ctx.drawImage(img, x, y, w, h)
@@ -170,34 +164,30 @@ export function drawAnimatedHose(ctx, landmarks, time, state, suctionStrength, t
   let hoseEnd, hoseStart
 
   if (state === 'mouth') {
-    // Hose goes FROM car fuel cap TO mouth
-    hoseStart = { x: carPos.x, y: carPos.y }
-    hoseEnd = { x: mouthCx, y: mouthCy }
+    hoseEnd = { x: mouthCx + tiltInfluence + 80, y: mouthCy + H * 0.25 }
+    hoseStart = mouthPos
   } else if (state === 'disconnecting') {
-    // Hose swings from car fuel cap to canister
     const t = (Math.sin(time * 0.003) + 1) / 2
-    hoseStart = {
-      x: carPos.x + (canisterPos.x - carPos.x) * t,
-      y: carPos.y + (canisterPos.y - carPos.y) * t,
-    }
     hoseEnd = {
       x: mouthCx + (canisterPos.x - mouthCx) * t,
       y: mouthCy + (canisterPos.y - mouthCy) * t,
     }
-  } else if (state === 'transferring') {
-    // Hose connected from car to canister
-    hoseStart = { x: carPos.x, y: carPos.y }
-    hoseEnd = { x: canisterPos.x, y: canisterPos.y }
-  } else if (state === 'reconnecting') {
-    // Hose swings from canister back to car fuel cap
-    const t = (Math.sin(time * 0.003 + Math.PI) + 1) / 2
     hoseStart = {
-      x: canisterPos.x + (carPos.x - canisterPos.x) * t,
-      y: canisterPos.y + (carPos.y - canisterPos.y) * t,
+      x: mouthPos.x + (canisterPos.x - mouthPos.x) * (t * 0.3),
+      y: mouthPos.y + (canisterPos.y - mouthPos.y) * (t * 0.3),
     }
+  } else if (state === 'transferring') {
+    hoseStart = { x: canisterPos.x - 20, y: canisterPos.y - 10 }
+    hoseEnd = { x: canisterPos.x + 15, y: canisterPos.y }
+  } else if (state === 'reconnecting') {
+    const t = (Math.sin(time * 0.003 + Math.PI) + 1) / 2
     hoseEnd = {
-      x: mouthCx + (carPos.x - mouthCx) * t,
-      y: mouthCy + (carPos.y - mouthCy) * t,
+      x: canisterPos.x + (mouthCx - canisterPos.x) * t,
+      y: canisterPos.y + (mouthCy - canisterPos.y) * t,
+    }
+    hoseStart = {
+      x: canisterPos.x + (mouthPos.x - canisterPos.x) * (t * 0.3),
+      y: canisterPos.y + (mouthPos.y - canisterPos.y) * (t * 0.3),
     }
   }
 
