@@ -1,59 +1,28 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
-import { getFaceLandmarker, resetFaceLandmarker, drawFaceMesh, drawSuctionEffect, drawHose, detectOMouth } from './utils/mediapipe'
+import { getFaceLandmarker, resetFaceLandmarker, drawFaceMesh, drawSuctionEffect, detectOMouth } from './utils/mediapipe'
+import {
+  drawCar, drawCanister, drawAnimatedHose,
+  playSuckSound, playDisconnectSound, playTransferSound,
+  playConnectSound, playScoreSound, playCanisterFullSound,
+} from './utils/graphics'
 
-// Telegram WebApp SDK
 const tg = window.Telegram?.WebApp
 
-// Game config
-const ROUND_DURATION = 15 // seconds per round
-const HOLD_THRESHOLD = 800 // ms to hold inhale-O to score a point
-const COOLDOWN = 600 // ms between scoring
-const POINTS_PER_INHALE = 10
-const BONUS_THRESHOLD = 5 // consecutive inhales for bonus
-const BONUS_MULTIPLIER = 2
+// ── Game config ──
+const ROUND_DURATION = 60
+const HOLD_THRESHOLD = 600
+const CANISTER_CAPACITY = 100 // suction units to fill canister
+const SUCTION_PER_TICK = 1.8 // suction gain per frame when active
+const TRANSFER_DURATION = 3000 // ms for fluid transfer animation
+const DISCONNECT_DURATION = 1500 // ms for hose disconnect animation
+const RECONNECT_DURATION = 1500 // ms for hose reconnect animation
 
-// Sound effects (Web Audio API)
-function playSound(type) {
-  try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)()
-    const osc = ctx.createOscillator()
-    const gain = ctx.createGain()
-    osc.connect(gain)
-    gain.connect(ctx.destination)
-
-    if (type === 'score') {
-      osc.frequency.setValueAtTime(880, ctx.currentTime)
-      osc.frequency.exponentialRampToValueAtTime(1320, ctx.currentTime + 0.1)
-      gain.gain.setValueAtTime(0.15, ctx.currentTime)
-      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.2)
-      osc.start()
-      osc.stop(ctx.currentTime + 0.2)
-    } else if (type === 'bonus') {
-      osc.frequency.setValueAtTime(660, ctx.currentTime)
-      osc.frequency.exponentialRampToValueAtTime(1760, ctx.currentTime + 0.3)
-      gain.gain.setValueAtTime(0.2, ctx.currentTime)
-      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.4)
-      osc.start()
-      osc.stop(ctx.currentTime + 0.4)
-    } else if (type === 'end') {
-      osc.type = 'triangle'
-      osc.frequency.setValueAtTime(440, ctx.currentTime)
-      osc.frequency.exponentialRampToValueAtTime(220, ctx.currentTime + 0.5)
-      gain.gain.setValueAtTime(0.15, ctx.currentTime)
-      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5)
-      osc.start()
-      osc.stop(ctx.currentTime + 0.5)
-    }
-  } catch (e) { /* silent */ }
-}
-
-// Confetti particle
 function ConfettiParticle({ style }) {
   return <div className="confetti" style={style} />
 }
 
 export default function App() {
-  const [phase, setPhase] = useState('menu') // menu | camera | playing | result
+  const [phase, setPhase] = useState('menu')
   const [score, setScore] = useState(0)
   const [timer, setTimer] = useState(ROUND_DURATION)
   const [streak, setStreak] = useState(0)
@@ -64,7 +33,8 @@ export default function App() {
   const [isActive, setIsActive] = useState(false)
   const [oShape, setOShape] = useState(0)
   const [suction, setSuction] = useState(0)
-  const [holdProgress, setHoldProgress] = useState(0)
+  const [canisterFill, setCanisterFill] = useState(0)
+  const [hoseState, setHoseState] = useState('mouth') // mouth | disconnecting | transferring | reconnecting
   const [bonusText, setBonusText] = useState(null)
   const [confetti, setConfetti] = useState([])
   const [highScore, setHighScore] = useState(() => {
@@ -76,20 +46,24 @@ export default function App() {
   const streamRef = useRef(null)
   const landmarkerRef = useRef(null)
   const animRef = useRef(null)
-  // Floating +points drawn on canvas near the face
   const floatingPointsRef = useRef([])
+  const targetsRef = useRef({ car: null, canister: null })
 
-  const stateRef = useRef({
+  const gs = useRef({
+    cycleState: 'sucking', // sucking | full | disconnecting | transferring | reconnecting
+    canisterLevel: 0,
+    cycleStartTime: 0,
     oStartTime: 0,
     lastScoreTime: 0,
     holding: false,
     streak: 0,
     score: 0,
     totalInhales: 0,
-    faceCenter: { x: 0.5, y: 0.35 }, // normalized face center
+    faceCenter: { x: 0.5, y: 0.35 },
+    lastSuckSoundTime: 0,
+    suctionSmoothed: 0,
   })
 
-  // Init Telegram
   useEffect(() => {
     if (tg) {
       tg.ready()
@@ -149,47 +123,40 @@ export default function App() {
       setPhase('camera')
       await new Promise(r => setTimeout(r, 800))
 
-      // Reset state
-      setScore(0)
-      setTimer(ROUND_DURATION)
-      setStreak(0)
-      setMaxStreak(0)
-      setTotalCount(0)
-      setIsO(false)
-      setIsSucking(false)
-      setIsActive(false)
-      setOShape(0)
-      setSuction(0)
-      setHoldProgress(0)
-      stateRef.current = {
+      setScore(0); setTimer(ROUND_DURATION); setStreak(0); setMaxStreak(0)
+      setTotalCount(0); setIsO(false); setIsSucking(false); setIsActive(false)
+      setOShape(0); setSuction(0); setCanisterFill(0); setHoseState('mouth')
+
+      gs.current = {
+        cycleState: 'sucking',
+        canisterLevel: 0,
+        cycleStartTime: 0,
         oStartTime: 0,
         lastScoreTime: 0,
         holding: false,
         streak: 0,
         score: 0,
         totalInhales: 0,
+        faceCenter: { x: 0.5, y: 0.35 },
+        lastSuckSoundTime: 0,
+        suctionSmoothed: 0,
       }
 
       setPhase('playing')
 
-      // Timer countdown
       const timerStart = Date.now()
       const timerInterval = setInterval(() => {
-        const elapsed = Math.floor((Date.now() - timerStart) / 1000)
-        const remaining = ROUND_DURATION - elapsed
+        const remaining = ROUND_DURATION - Math.floor((Date.now() - timerStart) / 1000)
         setTimer(remaining)
         if (remaining <= 0) {
           clearInterval(timerInterval)
           setPhase('result')
-          playSound('end')
           cleanup()
-          // Save high score
-          const finalScore = stateRef.current.score
+          const finalScore = gs.current.score
           if (finalScore > highScore) {
             setHighScore(finalScore)
             try { localStorage.setItem('o-face-highscore', String(finalScore)) } catch {}
           }
-          // Send to Telegram
           if (tg) {
             tg.HapticFeedback.notificationOccurred('success')
             tg.MainButton.setParams({ text: `Сыграть ещё (${finalScore} очков)`, is_visible: true })
@@ -197,7 +164,6 @@ export default function App() {
         }
       }, 500)
 
-      // Detection loop
       const canvas = canvasRef.current
       const ctx = canvas.getContext('2d')
 
@@ -210,141 +176,178 @@ export default function App() {
           if (canvas.width !== vw) canvas.width = vw
           if (canvas.height !== vh) canvas.height = vh
 
+          const W = canvas.width, H = canvas.height
+
           // Mirror video
           ctx.save()
-          ctx.translate(canvas.width, 0)
+          ctx.translate(W, 0)
           ctx.scale(-1, 1)
-          ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+          ctx.drawImage(video, 0, 0, W, H)
           ctx.restore()
+
+          // ── Draw static scene elements ──
+          // Car (right side)
+          const carCap = drawCar(ctx, W, H, time)
+          targetsRef.current.car = carCap
+
+          // Canister (left side)
+          const canisterPort = drawCanister(ctx, W, H, gs.current.canisterLevel, time)
+          targetsRef.current.canister = canisterPort
 
           try {
             const result = landmarker.detectForVideo(video, time)
             const landmarks = result?.faceLandmarks?.[0]
             const blendshapes = result?.faceBlendshapes?.[0]?.categories
 
-            // Track face center for floating points positioning
             if (landmarks) {
               const nose = landmarks[1]
               const forehead = landmarks[10]
               if (nose && forehead) {
-                // Use original (non-mirrored) landmarks for position
-                // since canvas is already mirrored
-                stateRef.current.faceCenter = {
+                gs.current.faceCenter = {
                   x: 1 - (nose.x + forehead.x) / 2,
                   y: (nose.y + forehead.y) / 2 - 0.08,
                 }
               }
             }
 
-            // Detect first so drawing functions can use the values
             let detection = { isO: false, isSucking: false, active: false, oShape: 0, suction: 0 }
             if (blendshapes) {
               detection = detectOMouth(blendshapes)
-            }
-
-            if (landmarks) {
-              const mirrored = landmarks.map(l => ({ x: 1 - l.x, y: l.y, z: l.z }))
-
-              // Draw hose (behind face mesh)
-              drawHose(ctx, mirrored, time, detection.suction)
-
-              // Draw face mesh
-              drawFaceMesh(ctx, mirrored, time)
-            }
-
-            if (blendshapes) {
               setIsO(detection.isO)
               setIsSucking(detection.isSucking)
               setIsActive(detection.active)
               setOShape(detection.oShape)
               setSuction(detection.suction)
+            }
 
-              // Draw suction particles on canvas
+            // Smoothed suction for sound
+            gs.current.suctionSmoothed = gs.current.suctionSmoothed * 0.7 + detection.suction * 0.3
+
+            // ── Cycle state machine ──
+            const g = gs.current
+
+            if (g.cycleState === 'sucking') {
+              // Draw animated hose connected to mouth
               if (landmarks) {
                 const mirrored = landmarks.map(l => ({ x: 1 - l.x, y: l.y, z: l.z }))
+                drawAnimatedHose(ctx, mirrored, time, 'mouth', detection.suction, targetsRef.current)
+                drawFaceMesh(ctx, mirrored, time)
                 drawSuctionEffect(ctx, mirrored, time, detection.suction)
               }
 
               if (detection.active) {
-                if (!stateRef.current.holding) {
-                  stateRef.current.holding = true
-                  stateRef.current.oStartTime = time
+                // Fill canister
+                g.canisterLevel = Math.min(CANISTER_CAPACITY, g.canisterLevel + SUCTION_PER_TICK)
+                setCanisterFill(Math.round((g.canisterLevel / CANISTER_CAPACITY) * 100))
+
+                // Suck sound (throttled)
+                if (time - g.lastSuckSoundTime > 150) {
+                  playSuckSound(g.suctionSmoothed)
+                  g.lastSuckSoundTime = time
                 }
 
-                const holdTime = time - stateRef.current.oStartTime
-                const progress = Math.min(100, (holdTime / HOLD_THRESHOLD) * 100)
-                setHoldProgress(progress)
-
-                if (holdTime >= HOLD_THRESHOLD && time - stateRef.current.lastScoreTime > COOLDOWN) {
-                  // Score!
-                  stateRef.current.lastScoreTime = time
-                  stateRef.current.totalInhales++
-                  stateRef.current.streak++
-                  const streak = stateRef.current.streak
-                  let points = POINTS_PER_INHALE
-
-                  if (streak >= BONUS_THRESHOLD) {
-                    points *= BONUS_MULTIPLIER
-                    showBonus(`🔥 x${BONUS_MULTIPLIER} БОНУС!`)
-                    playSound('bonus')
-                    if (tg) tg.HapticFeedback.impactOccurred('heavy')
-                  } else {
-                    playSound('score')
-                    if (tg) tg.HapticFeedback.impactOccurred('light')
-                  }
-
-                  stateRef.current.score += points
-                  setScore(stateRef.current.score)
-                  setStreak(streak)
-                  setTotalCount(stateRef.current.totalInhales)
-                  if (streak > stateRef.current.maxStreak) {
-                    stateRef.current.maxStreak = streak
-                    setMaxStreak(streak)
-                  }
-
-                  // Reset hold for next detection
-                  stateRef.current.oStartTime = time + COOLDOWN
+                // Score points
+                if (!g.holding) { g.holding = true; g.oStartTime = time }
+                const holdTime = time - g.oStartTime
+                if (holdTime >= HOLD_THRESHOLD && time - g.lastScoreTime > HOLD_THRESHOLD) {
+                  g.lastScoreTime = time
+                  g.totalInhales++
+                  g.streak++
+                  const pts = g.streak >= 5 ? 20 : 10
+                  g.score += pts
+                  setScore(g.score); setStreak(g.streak); setTotalCount(g.totalInhales)
+                  if (g.streak > g.maxStreak) { g.maxStreak = g.streak; setMaxStreak(g.streak) }
+                  playScoreSound()
+                  if (tg) tg.HapticFeedback.impactOccurred('light')
+                  g.oStartTime = time
                   spawnConfetti()
+                  if (g.streak >= 5) showBonus('🔥 x2 БОНУС!')
 
-                  // Spawn floating +points near the head
                   floatingPointsRef.current.push({
-                    x: stateRef.current.faceCenter.x + (Math.random() - 0.5) * 0.08,
-                    y: stateRef.current.faceCenter.y,
-                    text: `+${points}`,
-                    born: time,
-                    duration: 1200,
-                    color: streak >= BONUS_THRESHOLD ? '#f97316' : '#4ade80',
+                    x: g.faceCenter.x + (Math.random() - 0.5) * 0.08,
+                    y: g.faceCenter.y,
+                    text: `+${pts}`, born: time, duration: 1200,
+                    color: g.streak >= 5 ? '#f97316' : '#4ade80',
                   })
                 }
               } else {
-                if (stateRef.current.holding) {
-                  stateRef.current.holding = false
-                  stateRef.current.streak = 0
-                  setStreak(0)
-                }
-                setHoldProgress(0)
+                if (g.holding) { g.holding = false; g.streak = 0; setStreak(0) }
+              }
+
+              // Canister full → transition
+              if (g.canisterLevel >= CANISTER_CAPACITY) {
+                g.cycleState = 'disconnecting'
+                g.cycleStartTime = time
+                setHoseState('disconnecting')
+                playDisconnectSound()
+                playCanisterFullSound()
+                if (tg) tg.HapticFeedback.impactOccurred('heavy')
+                showBonus('🛢️ КАНИСТРА ПОЛНА!')
+              }
+
+            } else if (g.cycleState === 'disconnecting') {
+              // Hose swinging from mouth to canister
+              if (landmarks) {
+                const mirrored = landmarks.map(l => ({ x: 1 - l.x, y: l.y, z: l.z }))
+                drawAnimatedHose(ctx, mirrored, time, 'disconnecting', 0, targetsRef.current)
+                drawFaceMesh(ctx, mirrored, time)
+              }
+
+              if (time - g.cycleStartTime > DISCONNECT_DURATION) {
+                g.cycleState = 'transferring'
+                g.cycleStartTime = time
+                setHoseState('transferring')
+                playTransferSound()
+              }
+
+            } else if (g.cycleState === 'transferring') {
+              // Hose connected to canister, liquid flowing
+              drawAnimatedHose(ctx, landmarks ? landmarks.map(l => ({ x: 1 - l.x, y: l.y, z: l.z })) : [], time, 'transferring', 80, targetsRef.current)
+
+              if (landmarks) {
+                const mirrored = landmarks.map(l => ({ x: 1 - l.x, y: l.y, z: l.z }))
+                drawFaceMesh(ctx, mirrored, time)
+              }
+
+              // Animate canister draining back (visual: fluid settling)
+              const transferProgress = (time - g.cycleStartTime) / TRANSFER_DURATION
+              if (transferProgress >= 1) {
+                g.cycleState = 'reconnecting'
+                g.cycleStartTime = time
+                g.canisterLevel = 0
+                setCanisterFill(0)
+                setHoseState('reconnecting')
+                playConnectSound()
+              }
+
+            } else if (g.cycleState === 'reconnecting') {
+              // Hose swinging back to mouth
+              if (landmarks) {
+                const mirrored = landmarks.map(l => ({ x: 1 - l.x, y: l.y, z: l.z }))
+                drawAnimatedHose(ctx, mirrored, time, 'reconnecting', 0, targetsRef.current)
+                drawFaceMesh(ctx, mirrored, time)
+              }
+
+              if (time - g.cycleStartTime > RECONNECT_DURATION) {
+                g.cycleState = 'sucking'
+                setHoseState('mouth')
               }
             }
+
           } catch (e) { /* skip frame */ }
 
-          // Draw floating +points on canvas
+          // Floating +points
           const fps = floatingPointsRef.current
           for (let i = fps.length - 1; i >= 0; i--) {
             const fp = fps[i]
             const age = time - fp.born
-            if (age > fp.duration) {
-              fps.splice(i, 1)
-              continue
-            }
-            const progress = age / fp.duration
-            const x = fp.x * canvas.width
-            const y = fp.y * canvas.height - progress * 80 // float up
-            const alpha = 1 - progress * progress // ease-out fade
-            const scale = 1 + progress * 0.4
-
+            if (age > fp.duration) { fps.splice(i, 1); continue }
+            const p = age / fp.duration
+            const x = fp.x * W
+            const y = fp.y * H - p * 80
             ctx.save()
-            ctx.globalAlpha = alpha
-            ctx.font = `bold ${Math.round(28 * scale)}px -apple-system, sans-serif`
+            ctx.globalAlpha = 1 - p * p
+            ctx.font = `bold ${Math.round(28 * (1 + p * 0.4))}px -apple-system, sans-serif`
             ctx.textAlign = 'center'
             ctx.fillStyle = fp.color
             ctx.shadowColor = fp.color
@@ -352,6 +355,27 @@ export default function App() {
             ctx.fillText(fp.text, x, y)
             ctx.shadowBlur = 0
             ctx.restore()
+          }
+
+          // Cycle state label on canvas
+          if (gs.current.cycleState !== 'sucking') {
+            const labels = {
+              disconnecting: '⬆️ Отсоединение шланга...',
+              transferring: '⛽ Перелив в канистру...',
+              reconnecting: '↩️ Подключение обратно...',
+            }
+            const label = labels[gs.current.cycleState]
+            if (label) {
+              ctx.save()
+              ctx.font = 'bold 18px -apple-system, sans-serif'
+              ctx.textAlign = 'center'
+              ctx.fillStyle = 'rgba(255, 200, 50, 0.9)'
+              ctx.shadowColor = 'rgba(0,0,0,0.5)'
+              ctx.shadowBlur = 6
+              ctx.fillText(label, W / 2, H * 0.18)
+              ctx.shadowBlur = 0
+              ctx.restore()
+            }
           }
         }
 
@@ -363,19 +387,13 @@ export default function App() {
     } catch (e) {
       console.error('Camera error:', e)
       setPhase('menu')
-      alert(e.name === 'NotAllowedError'
-        ? 'Нужен доступ к камере для игры'
-        : `Ошибка: ${e.message}`)
+      alert(e.name === 'NotAllowedError' ? 'Нужен доступ к камере' : `Ошибка: ${e.message}`)
     }
   }, [cleanup, highScore, spawnConfetti, showBonus])
 
-  // Telegram MainButton handler
   useEffect(() => {
     if (tg && phase === 'result') {
-      const handler = () => {
-        tg.MainButton.hide()
-        setPhase('menu')
-      }
+      const handler = () => { tg.MainButton.hide(); setPhase('menu') }
       tg.MainButton.onClick(handler)
       return () => tg.MainButton.offClick(handler)
     }
@@ -383,7 +401,6 @@ export default function App() {
 
   return (
     <div className="app">
-      {/* Background particles */}
       <div className="bg-particles">
         {Array.from({ length: 20 }, (_, i) => (
           <div key={i} className="particle" style={{
@@ -395,7 +412,6 @@ export default function App() {
         ))}
       </div>
 
-      {/* Confetti */}
       {confetti.map(p => (
         <ConfettiParticle key={p.id} style={{
           left: `${p.left}%`,
@@ -404,10 +420,7 @@ export default function App() {
         }} />
       ))}
 
-      {/* Bonus text */}
-      {bonusText && (
-        <div className="bonus-popup">{bonusText}</div>
-      )}
+      {bonusText && <div className="bonus-popup">{bonusText}</div>}
 
       {/* MENU */}
       {phase === 'menu' && (
@@ -418,48 +431,28 @@ export default function App() {
                 <span className="logo-o">О</span>
               </div>
             </div>
-            <h1 className="title">О-face</h1>
-            <p className="subtitle">Сделай букву <strong>О</strong> ртом и <strong>вдохни</strong> через неё!</p>
+            <h1 className="title">O-face Tycoon</h1>
+            <p className="subtitle">Втягивай бензин через букву <strong>О</strong>!</p>
 
             <div className="rules-card">
-              <div className="rule">
-                <span className="rule-icon">📸</span>
-                <span>Включи камеру</span>
-              </div>
-              <div className="rule">
-                <span className="rule-icon">😮</span>
-                <span>Сделай букву О губами</span>
-              </div>
-              <div className="rule">
-                <span className="rule-icon">💨</span>
-                <span>Втяни воздух — щёки вжимаются</span>
-              </div>
-              <div className="rule">
-                <span className="rule-icon">⏱</span>
-                <span>15 секунд на раунд</span>
-              </div>
-              <div className="rule">
-                <span className="rule-icon">🔥</span>
-                <span>5+ подряд = двойные очки!</span>
-              </div>
+              <div className="rule"><span className="rule-icon">📸</span><span>Включи камеру</span></div>
+              <div className="rule"><span className="rule-icon">😮</span><span>Сделай букву О ртом</span></div>
+              <div className="rule"><span className="rule-icon">💨</span><span>Втяни воздух — щёки вжимаются</span></div>
+              <div className="rule"><span className="rule-icon">⛽</span><span>Заполни канистру бензином</span></div>
+              <div className="rule"><span className="rule-icon">🛢️</span><span>Канистра полна → перелив в машину</span></div>
             </div>
 
             {highScore > 0 && (
-              <div className="high-score">
-                🏆 Рекорд: <strong>{highScore}</strong>
-              </div>
+              <div className="high-score">🏆 Рекорд: <strong>{highScore}</strong></div>
             )}
 
-            <button className="btn-play" onClick={startGame}>
-              Играть
-            </button>
-
+            <button className="btn-play" onClick={startGame}>Играть</button>
             <p className="hint">Нужен доступ к камере</p>
           </div>
         </div>
       )}
 
-      {/* CAMERA LOADING */}
+      {/* CAMERA */}
       {phase === 'camera' && (
         <div className="screen camera-screen">
           <div className="camera-loader">
@@ -472,23 +465,16 @@ export default function App() {
       {/* PLAYING */}
       {phase === 'playing' && (
         <div className="screen play-screen">
-          {/* HUD */}
           <div className="hud">
             <div className="hud-left">
               <div className="hud-score">
-                <span className="hud-label">ОЧКИ</span>
-                <span className="hud-value">{score}</span>
+                <span className="hud-label">МОНЕТЫ</span>
+                <span className="hud-value">💰 {score}</span>
               </div>
-              {streak >= 3 && (
-                <div className="hud-streak">
-                  🔥 {streak}
-                </div>
-              )}
+              {streak >= 3 && <div className="hud-streak">🔥 {streak}</div>}
             </div>
             <div className="hud-center">
-              <div className={`hud-timer ${timer <= 5 ? 'urgent' : ''}`}>
-                {timer}
-              </div>
+              <div className={`hud-timer ${timer <= 5 ? 'urgent' : ''}`}>{timer}</div>
             </div>
             <div className="hud-right">
               <div className="hud-count">
@@ -498,12 +484,21 @@ export default function App() {
             </div>
           </div>
 
-          {/* Video */}
+          {/* Top hint bar */}
+          <div className="hint-bar">
+            {hoseState === 'mouth'
+              ? '😮 ВТЯГИВАЙ БЕНЗИН РТОМ, ЧТОБЫ ЗАПОЛНИТЬ КАНИСТРУ!'
+              : hoseState === 'transferring'
+                ? '⛽ ПЕРЕЛИВ БЕНЗИНА В КАНИСТРУ...'
+                : '↩️ ПОДКЛЮЧЕНИЕ ШЛАНГА...'
+            }
+          </div>
+
           <div className="video-container">
             <video ref={videoRef} playsInline muted style={{ display: 'none' }} />
             <canvas ref={canvasRef} className="game-canvas" />
 
-            {/* Status indicators */}
+            {/* O indicator */}
             <div className={`o-indicator ${isActive ? 'active' : ''}`}>
               <div className="o-ring">
                 <svg viewBox="0 0 80 80">
@@ -511,10 +506,10 @@ export default function App() {
                   <circle cx="40" cy="40" r="36" fill="none"
                     stroke={isActive ? '#4ade80' : isO ? '#fbbf24' : '#666'}
                     strokeWidth="4"
-                    strokeDasharray={`${(holdProgress / 100) * 2 * Math.PI * 36} ${2 * Math.PI * 36}`}
+                    strokeDasharray={`${(canisterFill / 100) * 2 * Math.PI * 36} ${2 * Math.PI * 36}`}
                     strokeLinecap="round"
                     transform="rotate(-90 40 40)"
-                    style={{ transition: 'stroke-dasharray 0.1s ease, stroke 0.2s ease' }}
+                    style={{ transition: 'stroke-dasharray 0.15s ease, stroke 0.2s ease' }}
                   />
                 </svg>
                 <span className="o-letter">О</span>
@@ -523,7 +518,16 @@ export default function App() {
               {isO && !isSucking && <span className="o-label warn">ВТЯНИ ВОЗДУХ!</span>}
             </div>
 
-            {/* Two-bar meters: O-shape + Suction */}
+            {/* Canister fill bar */}
+            <div className="canister-bar">
+              <div className="canister-bar-label">🛢️ КАНИСТРА</div>
+              <div className="canister-bar-track">
+                <div className="canister-bar-fill" style={{ width: `${canisterFill}%` }} />
+              </div>
+              <div className="canister-bar-pct">{canisterFill}%</div>
+            </div>
+
+            {/* Dual meters */}
             <div className="dual-meter">
               <div className="meter">
                 <span className="meter-label">О</span>
@@ -546,41 +550,21 @@ export default function App() {
       {phase === 'result' && (
         <div className="screen result-screen">
           <div className="result-content">
-            <div className="result-icon">
-              {score >= 100 ? '🏆' : score >= 50 ? '⭐' : '👍'}
-            </div>
+            <div className="result-icon">{score >= 100 ? '🏆' : score >= 50 ? '⭐' : '👍'}</div>
             <h2 className="result-title">
               {score >= 100 ? 'Невероятно!' : score >= 50 ? 'Отлично!' : 'Хороший старт!'}
             </h2>
-
             <div className="result-score">
-              <span className="result-score-value">{score}</span>
-              <span className="result-score-label">очков</span>
+              <span className="result-score-value">💰 {score}</span>
+              <span className="result-score-label">монет</span>
             </div>
-
-            {score > highScore && score > 0 && (
-              <div className="new-record">🎉 Новый рекорд!</div>
-            )}
-
+            {score > highScore && score > 0 && <div className="new-record">🎉 Новый рекорд!</div>}
             <div className="result-stats">
-              <div className="stat">
-                <span className="stat-value">{totalCount}</span>
-                <span className="stat-label">вдохов</span>
-              </div>
-              <div className="stat">
-                <span className="stat-value">{maxStreak}</span>
-                <span className="stat-label">макс. серия</span>
-              </div>
-              <div className="stat">
-                <span className="stat-value">🏆 {Math.max(score, highScore)}</span>
-                <span className="stat-label">рекорд</span>
-              </div>
+              <div className="stat"><span className="stat-value">{totalCount}</span><span className="stat-label">вдохов</span></div>
+              <div className="stat"><span className="stat-value">{maxStreak}</span><span className="stat-label">макс. серия</span></div>
+              <div className="stat"><span className="stat-value">🏆 {Math.max(score, highScore)}</span><span className="stat-label">рекорд</span></div>
             </div>
-
-            <button className="btn-play" onClick={() => {
-              if (tg) tg.MainButton.hide()
-              setPhase('menu')
-            }}>
+            <button className="btn-play" onClick={() => { if (tg) tg.MainButton.hide(); setPhase('menu') }}>
               Играть ещё
             </button>
           </div>
