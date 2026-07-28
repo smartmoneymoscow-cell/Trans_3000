@@ -31,14 +31,14 @@ export function drawCar(ctx, canvasW, canvasH, time) {
   const img = images.car
   if (!img) return { x: canvasW * 0.82, y: canvasH * 0.45 }
 
-  // Scale: fit height to 60% of canvas
-  const targetH = canvasH * 0.6
+  // Scale: fill right portion of screen
+  const targetH = canvasH * 0.85
   const scale = targetH / img.height
   const w = img.width * scale
   const h = img.height * scale
-  // Position: only rear part visible — right edge of car at canvas right edge
-  const x = canvasW - w * 0.35
-  const y = canvasH * 0.2
+  // Position: right half of screen, only rear visible
+  const x = canvasW * 0.55
+  const y = canvasH * 0.1
 
   ctx.save()
   ctx.drawImage(img, x, y, w, h)
@@ -58,8 +58,8 @@ export function drawCar(ctx, canvasW, canvasH, time) {
 
   ctx.restore()
 
-  // Return fuel cap position (approximate on the SVG)
-  const capX = x + w * 0.25  // fuel cap is at 60% of car width, but we show only right portion
+  // Return fuel cap position (60% across the car, 54% down)
+  const capX = x + w * 0.05
   const capY = y + h * 0.54
   return { x: capX, y: capY }
 }
