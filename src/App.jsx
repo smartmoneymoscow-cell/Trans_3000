@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { getFaceLandmarker, resetFaceLandmarker, drawFaceMesh, drawSuctionEffect, detectOMouth } from './utils/mediapipe'
 import {
-  drawCar, drawCanister, drawAnimatedHose,
+  preloadImages, drawCar, drawCanister, drawAnimatedHose,
   playSuckSound, playDisconnectSound, playTransferSound,
   playConnectSound, playScoreSound, playCanisterFullSound,
 } from './utils/graphics'
@@ -110,6 +110,9 @@ export default function App() {
 
   const startGame = useCallback(async () => {
     try {
+      // Preload SVG assets
+      await preloadImages()
+
       const landmarker = await getFaceLandmarker()
       landmarkerRef.current = landmarker
 
