@@ -327,6 +327,9 @@ export default function App() {
 
       setPhase('playing')
 
+      // Wait for React to flush DOM and mount <canvas>
+      await new Promise(r => setTimeout(r, 200))
+
       const timerStart = Date.now()
       const timerInterval = setInterval(() => {
         const remaining = ROUND_DURATION - Math.floor((Date.now() - timerStart) / 1000)
@@ -348,9 +351,20 @@ export default function App() {
       }, 500)
 
       const canvas = canvasRef.current
+      if (!canvas) {
+        console.error('Canvas not mounted after phase change')
+        cleanup()
+        setCameraError('CANVAS_NOT_MOUNTED')
+        setPhase('camera_error')
+        return
+      }
       const ctx = canvas.getContext('2d')
 
       const loop = () => {
+        if (!canvasRef.current) {
+          animRef.current = requestAnimationFrame(loop)
+          return
+        }
         const time = Date.now()
 
         if (video.readyState >= 2) {
