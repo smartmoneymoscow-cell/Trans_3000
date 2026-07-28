@@ -202,3 +202,169 @@ export function drawSuctionEffect(ctx, landmarks, time, suctionStrength) {
     ctx.fill()
   }
 }
+
+/**
+ * Draw a black hose connected to the mouth.
+ * The hose follows the mouth as the head turns.
+ * Air particles flow through it during suction.
+ *
+ * @param {CanvasRenderingContext2D} ctx
+ * @param {Array} landmarks - mirrored face landmarks (478 points)
+ * @param {number} time - Date.now()
+ * @param {number} suctionStrength - 0..100 suction intensity
+ */
+export function drawHose(ctx, landmarks, time, suctionStrength) {
+  if (!landmarks || landmarks.length < 478) return
+
+  const W = ctx.canvas.width
+  const H = ctx.canvas.height
+
+  // ── Mouth attachment point ──
+  const upperLip = landmarks[13]
+  const lowerLip = landmarks[14]
+  const mouthLeft = landmarks[61]
+  const mouthRight = landmarks[291]
+  const chin = landmarks[152]
+  const noseTip = landmarks[1]
+  if (!upperLip || !lowerLip || !chin) return
+
+  const mouthCx = ((upperLip.x + lowerLip.x) / 2) * W
+  const mouthCy = ((upperLip.y + lowerLip.y) / 2) * H
+
+  // Mouth width for hose diameter
+  const mouthW = mouthLeft && mouthRight
+    ? Math.abs(mouthRight.x - mouthLeft.x) * W * 0.6
+    : 20
+  const hoseRadius = Math.max(8, Math.min(18, mouthW * 0.35))
+
+  // ── Head rotation → hose direction ──
+  // Use nose-to-chin vector to determine head tilt
+  const noseX = noseTip.x * W
+  const noseY = noseTip.y * H
+  const chinX = chin.x * W
+  const chinY = chin.y * H
+
+  // Head tilt angle (nose-to-chin direction)
+  const headAngle = Math.atan2(chinY - noseY, chinX - noseX)
+
+  // Hose goes from mouth, curves down following gravity + head tilt
+  // Offset the end point based on head rotation
+  const hoseLen = H * 0.35 // hose length relative to canvas
+  const tiltInfluence = Math.sin(headAngle) * hoseLen * 0.3
+
+  // ── Bezier control points ──
+  // P0: mouth center (attachment)
+  const p0x = mouthCx
+  const p0y = mouthCy
+
+  // P1: slight curve out from mouth (in direction of chin)
+  const p1x = mouthCx + tiltInfluence * 0.3
+  const p1y = mouthCy + hoseLen * 0.25
+
+  // P2: mid-hose curve
+  const p2x = mouthCx + tiltInfluence * 0.8 + Math.sin(time * 0.0008) * 8
+  const p2y = mouthCy + hoseLen * 0.6
+
+  // P3: hose end (off-screen bottom)
+  const p3x = mouthCx + tiltInfluence + Math.sin(time * 0.0006) * 5
+  const p3y = mouthCy + hoseLen
+
+  // ── Draw hose body (thick black tube with shading) ──
+  // Draw multiple strokes for 3D tube effect
+  const segments = 40
+
+  // Outer shadow
+  ctx.save()
+  ctx.lineCap = 'round'
+  ctx.lineJoin = 'round'
+
+  // Layer 1: dark outer edge
+  ctx.beginPath()
+  ctx.moveTo(p0x, p0y)
+  ctx.bezierCurveTo(p1x, p1y, p2x, p2y, p3x, p3y)
+  ctx.strokeStyle = 'rgba(0, 0, 0, 0.6)'
+  ctx.lineWidth = hoseRadius * 2 + 4
+  ctx.stroke()
+
+  // Layer 2: main black body
+  ctx.beginPath()
+  ctx.moveTo(p0x, p0y)
+  ctx.bezierCurveTo(p1x, p1y, p2x, p2y, p3x, p3y)
+  ctx.strokeStyle = '#1a1a1a'
+  ctx.lineWidth = hoseRadius * 2
+  ctx.stroke()
+
+  // Layer 3: highlight stripe (3D shading)
+  ctx.beginPath()
+  ctx.moveTo(p0x, p0y)
+  ctx.bezierCurveTo(p1x, p1y, p2x, p2y, p3x, p3y)
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)'
+  ctx.lineWidth = hoseRadius * 0.8
+  ctx.stroke()
+
+  // ── Hose connector ring at mouth ──
+  const connR = hoseRadius + 3
+  ctx.beginPath()
+  ctx.arc(p0x, p0y, connR, 0, Math.PI * 2)
+  ctx.fillStyle = '#2a2a2a'
+  ctx.fill()
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)'
+  ctx.lineWidth = 1.5
+  ctx.stroke()
+
+  // Inner hole
+  ctx.beginPath()
+  ctx.arc(p0x, p0y, hoseRadius - 2, 0, Math.PI * 2)
+  ctx.fillStyle = '#0a0a0a'
+  ctx.fill()
+
+  ctx.restore()
+
+  // ── Air particles flowing through hose during suction ──
+  if (suctionStrength > 5) {
+    const strength = suctionStrength / 100
+    const numAir = Math.floor(strength * 12) + 4
+
+    for (let i = 0; i < numAir; i++) {
+      // Each particle has a position along the bezier (0..1)
+      const speed = 0.0006 + strength * 0.001
+      const t = ((time * speed + i / numAir) % 1)
+
+      // Cubic bezier interpolation
+      const t2 = t * t
+      const t3 = t2 * t
+      const mt = 1 - t
+      const mt2 = mt * mt
+      const mt3 = mt2 * mt
+
+      const px = mt3 * p0x + 3 * mt2 * t * p1x + 3 * mt * t2 * p2x + t3 * p3x
+      const py = mt3 * p0y + 3 * mt2 * t * p1y + 3 * mt * t2 * p2y + t3 * p3y
+
+      // Particle size — bigger near mouth, smaller at end
+      const size = (2 + (1 - t) * 3) * strength
+      // Alpha — fade near ends
+      const alpha = Math.sin(t * Math.PI) * strength * 0.7
+
+      // Slight random offset for organic feel
+      const offX = Math.sin(time * 0.005 + i * 2.1) * hoseRadius * 0.4
+      const offY = Math.cos(time * 0.004 + i * 1.7) * hoseRadius * 0.3
+
+      ctx.beginPath()
+      ctx.arc(px + offX, py + offY, size, 0, Math.PI * 2)
+      ctx.fillStyle = `rgba(140, 200, 255, ${alpha})`
+      ctx.fill()
+    }
+
+    // Glow at mouth opening during strong suction
+    if (suctionStrength > 30) {
+      const glowR = hoseRadius * 2 + strength * 10
+      const grad = ctx.createRadialGradient(p0x, p0y, 0, p0x, p0y, glowR)
+      grad.addColorStop(0, `rgba(100, 200, 255, ${strength * 0.2})`)
+      grad.addColorStop(1, 'transparent')
+      ctx.fillStyle = grad
+      ctx.beginPath()
+      ctx.arc(p0x, p0y, glowR, 0, Math.PI * 2)
+      ctx.fill()
+    }
+  }
+}

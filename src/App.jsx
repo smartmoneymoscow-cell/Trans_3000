@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
-import { getFaceLandmarker, resetFaceLandmarker, drawFaceMesh, drawSuctionEffect, detectOMouth } from './utils/mediapipe'
+import { getFaceLandmarker, resetFaceLandmarker, drawFaceMesh, drawSuctionEffect, drawHose, detectOMouth } from './utils/mediapipe'
 
 // Telegram WebApp SDK
 const tg = window.Telegram?.WebApp
@@ -236,14 +236,23 @@ export default function App() {
               }
             }
 
+            // Detect first so drawing functions can use the values
+            let detection = { isO: false, isSucking: false, active: false, oShape: 0, suction: 0 }
+            if (blendshapes) {
+              detection = detectOMouth(blendshapes)
+            }
+
             if (landmarks) {
-              // Mirror landmarks for display
               const mirrored = landmarks.map(l => ({ x: 1 - l.x, y: l.y, z: l.z }))
+
+              // Draw hose (behind face mesh)
+              drawHose(ctx, mirrored, time, detection.suction)
+
+              // Draw face mesh
               drawFaceMesh(ctx, mirrored, time)
             }
 
             if (blendshapes) {
-              const detection = detectOMouth(blendshapes)
               setIsO(detection.isO)
               setIsSucking(detection.isSucking)
               setIsActive(detection.active)
