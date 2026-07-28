@@ -11,8 +11,8 @@ const tg = window.Telegram?.WebApp
 // ── Game config ──
 const ROUND_DURATION = 60
 const HOLD_THRESHOLD = 600
-const CANISTER_CAPACITY = 100 // suction units to fill canister
-const SUCTION_PER_TICK = 1.8 // suction gain per frame when active
+const CANISTER_CAPACITY = 10 // number of inhales to fill canister
+const SUCTION_PER_INHALE = 1 // canister gain per scored inhale
 const TRANSFER_DURATION = 3000 // ms for fluid transfer animation
 const DISCONNECT_DURATION = 1500 // ms for hose disconnect animation
 const RECONNECT_DURATION = 1500 // ms for hose reconnect animation
@@ -236,10 +236,6 @@ export default function App() {
               }
 
               if (detection.active) {
-                // Fill canister
-                g.canisterLevel = Math.min(CANISTER_CAPACITY, g.canisterLevel + SUCTION_PER_TICK)
-                setCanisterFill(Math.round((g.canisterLevel / CANISTER_CAPACITY) * 100))
-
                 // Suck sound (throttled)
                 if (time - g.lastSuckSoundTime > 150) {
                   playSuckSound(g.suctionSmoothed)
@@ -269,6 +265,10 @@ export default function App() {
                     text: `+${pts}`, born: time, duration: 1200,
                     color: g.streak >= 5 ? '#f97316' : '#4ade80',
                   })
+
+                  // Fill canister per inhale
+                  g.canisterLevel = Math.min(CANISTER_CAPACITY, g.canisterLevel + SUCTION_PER_INHALE)
+                  setCanisterFill(Math.round((g.canisterLevel / CANISTER_CAPACITY) * 100))
                 }
               } else {
                 if (g.holding) { g.holding = false; g.streak = 0; setStreak(0) }
