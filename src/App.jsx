@@ -11,14 +11,106 @@ const tg = window.Telegram?.WebApp
 // ── Game config ──
 const ROUND_DURATION = 60
 const HOLD_THRESHOLD = 600
-const CYCLE_CAPACITY = 10 // fill points per transfer cycle (5 strong or 10 weak)
-const STRONG_SUCTION_THRESHOLD = 50 // suction > 50 = strong inhale
-const STRONG_INHALE_VALUE = 2 // strong inhale = 2 fill points
-const WEAK_INHALE_VALUE = 1 // weak inhale = 1 fill point
-const CANISTER_CYCLES = 4 // transfers needed to fill the big canister
-const TRANSFER_DURATION = 3000 // ms for fluid transfer animation
-const DISCONNECT_DURATION = 1500 // ms for hose disconnect animation
-const RECONNECT_DURATION = 1500 // ms for hose reconnect animation
+const CYCLE_CAPACITY = 10
+const STRONG_SUCTION_THRESHOLD = 50
+const STRONG_INHALE_VALUE = 2
+const WEAK_INHALE_VALUE = 1
+const CANISTER_CYCLES = 4
+const TRANSFER_DURATION = 3000
+const DISCONNECT_DURATION = 1500
+const RECONNECT_DURATION = 1500
+
+// ── Camera diagnostics ──
+function getCameraDiagnostics() {
+  const ua = navigator.userAgent || ''
+  const isIOS = /iPhone|iPad|iPod/.test(ua)
+  const isAndroid = /Android/.test(ua)
+  const isTelegram = /Telegram/i.test(ua) || !!window.Telegram?.WebApp
+  const isSecure = location.protocol === 'https:' || location.hostname === 'localhost'
+  const hasMediaDevices = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)
+  const isWKWebView = isIOS && !/Safari/.test(ua) && /AppleWebKit/.test(ua)
+
+  return { isIOS, isAndroid, isTelegram, isSecure, hasMediaDevices, isWKWebView }
+}
+
+// ── Robust camera acquisition ──
+async function acquireCamera() {
+  const diag = getCameraDiagnostics()
+
+  // 1. Check secure context
+  if (!diag.isSecure) {
+    throw new Error('CAMERA_REQUIRES_HTTPS')
+  }
+
+  // 2. Check API availability
+  if (!diag.hasMediaDevices) {
+    throw new Error('CAMERA_API_UNAVAILABLE')
+  }
+
+  // 3. Try constraints in order of preference
+  const constraintSets = [
+    // Best: front camera, ideal resolution
+    {
+      video: {
+        facingMode: 'user',
+        width: { ideal: 640 },
+        height: { ideal: 480 },
+      },
+      audio: false,
+    },
+    // Fallback 1: front camera, no resolution preference
+    {
+      video: { facingMode: 'user' },
+      audio: false,
+    },
+    // Fallback 2: any camera
+    {
+      video: true,
+      audio: false,
+    },
+    // Fallback 3: minimal constraints (some old WebViews need this)
+    {
+      video: {},
+      audio: false,
+    },
+  ]
+
+  let lastError = null
+
+  for (const constraints of constraintSets) {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia(constraints)
+      // Verify we got a video track
+      const videoTracks = stream.getVideoTracks()
+      if (videoTracks.length === 0) {
+        stream.getTracks().forEach(t => t.stop())
+        throw new Error('NO_VIDEO_TRACK')
+      }
+      return stream
+    } catch (err) {
+      lastError = err
+      // If user denied, don't try other constraints
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        throw new Error('CAMERA_DENIED')
+      }
+      // If NotFound, no camera at all
+      if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+        throw new Error('CAMERA_NOT_FOUND')
+      }
+      // Otherwise try next constraint set
+      continue
+    }
+  }
+
+  // All constraint sets failed
+  if (lastError) {
+    if (lastError.name === 'NotReadableError' || lastError.name === 'TrackStartError') {
+      throw new Error('CAMERA_IN_USE')
+    }
+    throw new Error(`CAMERA_FAILED: ${lastError.message || lastError.name}`)
+  }
+  throw new Error('CAMERA_FAILED')
+}
 
 function ConfettiParticle({ style }) {
   return <div className="confetti" style={style} />
@@ -36,11 +128,12 @@ export default function App() {
   const [isActive, setIsActive] = useState(false)
   const [oShape, setOShape] = useState(0)
   const [suction, setSuction] = useState(0)
-  const [cycleFill, setCycleFill] = useState(0) // 0-100 current transfer cycle
-  const [canisterCycles, setCanisterCycles] = useState(0) // 0-4 completed transfers
-  const [hoseState, setHoseState] = useState('mouth') // mouth | disconnecting | transferring | reconnecting
+  const [cycleFill, setCycleFill] = useState(0)
+  const [canisterCycles, setCanisterCycles] = useState(0)
+  const [hoseState, setHoseState] = useState('mouth')
   const [bonusText, setBonusText] = useState(null)
   const [confetti, setConfetti] = useState([])
+  const [cameraError, setCameraError] = useState(null)
   const [highScore, setHighScore] = useState(() => {
     try { return parseInt(localStorage.getItem('o-face-highscore') || '0', 10) } catch { return 0 }
   })
@@ -54,9 +147,9 @@ export default function App() {
   const targetsRef = useRef({ car: null, canister: null })
 
   const gs = useRef({
-    cycleState: 'sucking', // sucking | full | disconnecting | transferring | reconnecting
-    cycleLevel: 0, // 0..CYCLE_CAPACITY
-    canisterCycles: 0, // 0..CANISTER_CYCLES completed transfers
+    cycleState: 'sucking',
+    cycleLevel: 0,
+    canisterCycles: 0,
     cycleStartTime: 0,
     oStartTime: 0,
     lastScoreTime: 0,
@@ -108,28 +201,109 @@ export default function App() {
     setTimeout(() => setBonusText(null), 1200)
   }, [])
 
+  // ── Human-readable error messages ──
+  const getErrorUI = useCallback((errorType) => {
+    const diag = getCameraDiagnostics()
+
+    const errors = {
+      CAMERA_REQUIRES_HTTPS: {
+        icon: '🔒',
+        title: 'Нужен HTTPS',
+        text: 'Камера работает только по защищённому соединению. Откройте приложение по https:// ссылке.',
+        canRetry: false,
+      },
+      CAMERA_API_UNAVAILABLE: {
+        icon: '📱',
+        title: 'Камера не поддерживается',
+        text: diag.isIOS
+          ? 'Обновите Telegram до последней версии. На старых версиях iOS камера может не работать в мини-приложениях.'
+          : 'Обновите Telegram или попробуйте открыть в браузере Chrome/Safari.',
+        canRetry: false,
+      },
+      CAMERA_DENIED: {
+        icon: '🚫',
+        title: 'Доступ к камере запрещён',
+        text: 'Разрешите доступ к камере в настройках браузера или Telegram и попробуйте снова.',
+        canRetry: true,
+      },
+      CAMERA_NOT_FOUND: {
+        icon: '📷',
+        title: 'Камера не найдена',
+        text: 'На этом устройстве нет камеры, или она занята другим приложением.',
+        canRetry: true,
+      },
+      CAMERA_IN_USE: {
+        icon: '📷',
+        title: 'Камера занята',
+        text: 'Камера используется другим приложением. Закройте его и попробуйте снова.',
+        canRetry: true,
+      },
+    }
+
+    // Match known errors or use generic
+    for (const [key, val] of Object.entries(errors)) {
+      if (errorType === key) return val
+    }
+
+    return {
+      icon: '⚠️',
+      title: 'Ошибка камеры',
+      text: `Не удалось подключить камеру. Попробуйте обновить Telegram или открыть в браузере.\n\n${errorType}`,
+      canRetry: true,
+    }
+  }, [])
+
   const startGame = useCallback(async () => {
+    setCameraError(null)
+
     try {
       // Preload SVG assets
       await preloadImages()
 
+      // Load MediaPipe model
       const landmarker = await getFaceLandmarker()
       landmarkerRef.current = landmarker
 
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
-      })
+      // Acquire camera with fallback chain
+      const stream = await acquireCamera()
       streamRef.current = stream
 
-      const video = videoRef.current
-      if (!video) return
-      video.srcObject = stream
-      video.setAttribute('playsinline', '')
-      video.style.display = 'none'
-      await video.play()
-
+      // Set phase FIRST so <video> mounts in DOM
       setPhase('camera')
-      await new Promise(r => setTimeout(r, 800))
+
+      // Wait for React to flush and mount the <video> element
+      await new Promise(r => setTimeout(r, 150))
+
+      const video = videoRef.current
+      if (!video) {
+        throw new Error('VIDEO_ELEMENT_NOT_MOUNTED')
+      }
+
+      // Attach stream to video element
+      video.srcObject = stream
+      video.muted = true
+      video.playsInline = true
+      video.setAttribute('playsinline', '')
+      video.setAttribute('webkit-playsinline', '')
+
+      // Wait for video to be ready
+      await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error('VIDEO_PLAY_TIMEOUT')), 10000)
+        video.onloadedmetadata = () => {
+          video.play()
+            .then(() => { clearTimeout(timeout); resolve() })
+            .catch(reject)
+        }
+        // If metadata already loaded (cached)
+        if (video.readyState >= 1) {
+          video.play()
+            .then(() => { clearTimeout(timeout); resolve() })
+            .catch(reject)
+        }
+      })
+
+      // Small delay for camera warm-up
+      await new Promise(r => setTimeout(r, 600))
 
       setScore(0); setTimer(ROUND_DURATION); setStreak(0); setMaxStreak(0)
       setTotalCount(0); setIsO(false); setIsSucking(false); setIsActive(false)
@@ -194,12 +368,10 @@ export default function App() {
           ctx.drawImage(video, 0, 0, W, H)
           ctx.restore()
 
-          // ── Draw static scene elements ──
-          // Car (right side)
+          // Draw static scene elements
           const carCap = drawCar(ctx, W, H, time)
           targetsRef.current.car = carCap
 
-          // Canister (left side) — fill level = cycles completed / total
           const canisterPct = (gs.current.canisterCycles / CANISTER_CYCLES) * 100
           const canisterPort = drawCanister(ctx, W, H, canisterPct, time)
           targetsRef.current.canister = canisterPort
@@ -230,14 +402,11 @@ export default function App() {
               setSuction(detection.suction)
             }
 
-            // Smoothed suction for sound
             gs.current.suctionSmoothed = gs.current.suctionSmoothed * 0.7 + detection.suction * 0.3
 
-            // ── Cycle state machine ──
             const g = gs.current
 
             if (g.cycleState === 'sucking') {
-              // Draw animated hose connected to mouth
               if (landmarks) {
                 const mirrored = landmarks.map(l => ({ x: 1 - l.x, y: l.y, z: l.z }))
                 drawAnimatedHose(ctx, mirrored, time, 'mouth', detection.suction, targetsRef.current)
@@ -246,13 +415,11 @@ export default function App() {
               }
 
               if (detection.active) {
-                // Suck sound (throttled)
                 if (time - g.lastSuckSoundTime > 150) {
                   playSuckSound(g.suctionSmoothed)
                   g.lastSuckSoundTime = time
                 }
 
-                // Score points
                 if (!g.holding) { g.holding = true; g.oStartTime = time }
                 const holdTime = time - g.oStartTime
                 if (holdTime >= HOLD_THRESHOLD && time - g.lastScoreTime > HOLD_THRESHOLD) {
@@ -276,7 +443,6 @@ export default function App() {
                     color: g.streak >= 5 ? '#f97316' : '#4ade80',
                   })
 
-                  // Fill cycle: strong inhale = 2 pts, weak = 1 pt
                   const isStrong = g.suctionSmoothed >= STRONG_SUCTION_THRESHOLD
                   const fillValue = isStrong ? STRONG_INHALE_VALUE : WEAK_INHALE_VALUE
                   g.cycleLevel = Math.min(CYCLE_CAPACITY, g.cycleLevel + fillValue)
@@ -287,7 +453,6 @@ export default function App() {
                 if (g.holding) { g.holding = false; g.streak = 0; setStreak(0) }
               }
 
-              // Cycle full → transfer
               if (g.cycleLevel >= CYCLE_CAPACITY) {
                 g.cycleState = 'disconnecting'
                 g.cycleStartTime = time
@@ -298,13 +463,11 @@ export default function App() {
               }
 
             } else if (g.cycleState === 'disconnecting') {
-              // Hose swinging from mouth to canister
               if (landmarks) {
                 const mirrored = landmarks.map(l => ({ x: 1 - l.x, y: l.y, z: l.z }))
                 drawAnimatedHose(ctx, mirrored, time, 'disconnecting', 0, targetsRef.current)
                 drawFaceMesh(ctx, mirrored, time)
               }
-
               if (time - g.cycleStartTime > DISCONNECT_DURATION) {
                 g.cycleState = 'transferring'
                 g.cycleStartTime = time
@@ -313,30 +476,24 @@ export default function App() {
               }
 
             } else if (g.cycleState === 'transferring') {
-              // Hose connected to canister, liquid flowing
               drawAnimatedHose(ctx, landmarks ? landmarks.map(l => ({ x: 1 - l.x, y: l.y, z: l.z })) : [], time, 'transferring', 80, targetsRef.current)
-
               if (landmarks) {
                 const mirrored = landmarks.map(l => ({ x: 1 - l.x, y: l.y, z: l.z }))
                 drawFaceMesh(ctx, mirrored, time)
               }
-
               const transferProgress = (time - g.cycleStartTime) / TRANSFER_DURATION
               if (transferProgress >= 1) {
-                // Transfer complete → increment canister cycles
                 g.canisterCycles++
                 g.cycleLevel = 0
                 setCanisterCycles(g.canisterCycles)
                 setCycleFill(0)
 
                 if (g.canisterCycles >= CANISTER_CYCLES) {
-                  // WIN! Big canister full
                   showBonus('🏆 КАНИСТРА ПОЛНА! ПОБЕДА!')
                   playCanisterFullSound()
                   if (tg) tg.HapticFeedback.notificationOccurred('success')
-                  g.score += 100 // bonus for completing
+                  g.score += 100
                   setScore(g.score)
-                  // End game
                   setTimeout(() => {
                     setPhase('result')
                     cleanup()
@@ -358,13 +515,11 @@ export default function App() {
               }
 
             } else if (g.cycleState === 'reconnecting') {
-              // Hose swinging back to mouth
               if (landmarks) {
                 const mirrored = landmarks.map(l => ({ x: 1 - l.x, y: l.y, z: l.z }))
                 drawAnimatedHose(ctx, mirrored, time, 'reconnecting', 0, targetsRef.current)
                 drawFaceMesh(ctx, mirrored, time)
               }
-
               if (time - g.cycleStartTime > RECONNECT_DURATION) {
                 g.cycleState = 'sucking'
                 setHoseState('mouth')
@@ -394,7 +549,7 @@ export default function App() {
             ctx.restore()
           }
 
-          // Cycle state label on canvas
+          // Cycle state label
           if (gs.current.cycleState !== 'sucking') {
             const labels = {
               disconnecting: '⬆️ Отсоединение шланга...',
@@ -422,9 +577,11 @@ export default function App() {
       animRef.current = requestAnimationFrame(loop)
 
     } catch (e) {
-      console.error('Camera error:', e)
-      setPhase('menu')
-      alert(e.name === 'NotAllowedError' ? 'Нужен доступ к камере' : `Ошибка: ${e.message}`)
+      console.error('Camera/startup error:', e)
+      cleanup()
+      const errorType = e.message || e.name || 'UNKNOWN'
+      setCameraError(errorType)
+      setPhase('camera_error')
     }
   }, [cleanup, highScore, spawnConfetti, showBonus])
 
@@ -438,6 +595,14 @@ export default function App() {
 
   return (
     <div className="app">
+      {/* Video element — always mounted, always hidden */}
+      <video
+        ref={videoRef}
+        playsInline
+        muted
+        style={{ position: 'absolute', width: 1, height: 1, opacity: 0, pointerEvents: 'none' }}
+      />
+
       <div className="bg-particles">
         {Array.from({ length: 20 }, (_, i) => (
           <div key={i} className="particle" style={{
@@ -490,7 +655,7 @@ export default function App() {
         </div>
       )}
 
-      {/* CAMERA */}
+      {/* CAMERA LOADING */}
       {phase === 'camera' && (
         <div className="screen camera-screen">
           <div className="camera-loader">
@@ -500,29 +665,43 @@ export default function App() {
         </div>
       )}
 
+      {/* CAMERA ERROR */}
+      {phase === 'camera_error' && (
+        <div className="screen camera-error-screen">
+          <div className="camera-error-content">
+            {(() => {
+              const err = getErrorUI(cameraError)
+              return (
+                <>
+                  <div className="error-icon">{err.icon}</div>
+                  <h2 className="error-title">{err.title}</h2>
+                  <p className="error-text">{err.text}</p>
+                  <div className="error-actions">
+                    {err.canRetry && (
+                      <button className="btn-play" onClick={startGame}>Попробовать снова</button>
+                    )}
+                    <button className="btn-secondary" onClick={() => { setCameraError(null); setPhase('menu') }}>
+                      Назад
+                    </button>
+                  </div>
+                </>
+              )
+            })()}
+          </div>
+        </div>
+      )}
+
       {/* PLAYING */}
       {phase === 'playing' && (
-        <div className="screen play-screen">
-          <div className="hud">
+        <div className="screen playing-screen">
+          <div className="hud-top">
             <div className="hud-left">
-              <div className="hud-score">
-                <span className="hud-label">МОНЕТЫ</span>
-                <span className="hud-value">💰 {score}</span>
-              </div>
-              {streak >= 3 && <div className="hud-streak">🔥 {streak}</div>}
+              <div className="score-display">💰 {score}</div>
+              <div className="streak-display">🔥 {streak > 0 ? `x${streak}` : '—'}</div>
             </div>
-            <div className="hud-center">
-              <div className={`hud-timer ${timer <= 5 ? 'urgent' : ''}`}>{timer}</div>
-            </div>
-            <div className="hud-right">
-              <div className="hud-count">
-                <span className="hud-label">ВДОХ</span>
-                <span className="hud-value">{totalCount}</span>
-              </div>
-            </div>
+            <div className="hud-timer">{timer}</div>
           </div>
 
-          {/* Top hint bar */}
           <div className="hint-bar">
             {hoseState === 'mouth'
               ? '😮 ВТЯГИВАЙ БЕНЗИН РТОМ, ЧТОБЫ ЗАПОЛНИТЬ КАНИСТРУ!'
@@ -533,7 +712,6 @@ export default function App() {
           </div>
 
           <div className="video-container">
-            <video ref={videoRef} playsInline muted style={{ display: 'none' }} />
             <canvas ref={canvasRef} className="game-canvas" />
 
             {/* O indicator */}
@@ -557,7 +735,7 @@ export default function App() {
               {isO && !isSucking && <span className="o-label warn">ВТЯНИ ВОЗДУХ!</span>}
             </div>
 
-            {/* Cycle fill bar (per transfer) */}
+            {/* Cycle fill bar */}
             <div className="canister-bar">
               <div className="canister-bar-label">⛽ ПЕРЕЛИВ</div>
               <div className="canister-bar-track">
@@ -566,7 +744,7 @@ export default function App() {
               <div className="canister-bar-pct">{cycleFill}%</div>
             </div>
 
-            {/* Big canister progress (4 cycles) */}
+            {/* Big canister progress */}
             <div className="big-canister-bar">
               <div className="big-canister-label">🛢️ КАНИСТРА</div>
               <div className="big-canister-dots">
