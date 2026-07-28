@@ -1,15 +1,15 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
-import { getFaceLandmarker, resetFaceLandmarker, drawFaceMesh, detectOMouth } from './utils/mediapipe'
+import { getFaceLandmarker, resetFaceLandmarker, drawFaceMesh, drawSuctionEffect, detectOMouth } from './utils/mediapipe'
 
 // Telegram WebApp SDK
 const tg = window.Telegram?.WebApp
 
 // Game config
 const ROUND_DURATION = 15 // seconds per round
-const HOLD_THRESHOLD = 800 // ms to hold O to score a point
+const HOLD_THRESHOLD = 800 // ms to hold inhale-O to score a point
 const COOLDOWN = 600 // ms between scoring
-const POINTS_PER_O = 10
-const BONUS_THRESHOLD = 5 // consecutive O's for bonus
+const POINTS_PER_INHALE = 10
+const BONUS_THRESHOLD = 5 // consecutive inhales for bonus
 const BONUS_MULTIPLIER = 2
 
 // Sound effects (Web Audio API)
@@ -58,9 +58,12 @@ export default function App() {
   const [timer, setTimer] = useState(ROUND_DURATION)
   const [streak, setStreak] = useState(0)
   const [maxStreak, setMaxStreak] = useState(0)
-  const [totalOCount, setTotalOCount] = useState(0)
+  const [totalCount, setTotalCount] = useState(0)
   const [isO, setIsO] = useState(false)
-  const [confidence, setConfidence] = useState(0)
+  const [isSucking, setIsSucking] = useState(false)
+  const [isActive, setIsActive] = useState(false)
+  const [oShape, setOShape] = useState(0)
+  const [suction, setSuction] = useState(0)
   const [holdProgress, setHoldProgress] = useState(0)
   const [bonusText, setBonusText] = useState(null)
   const [confetti, setConfetti] = useState([])
@@ -79,7 +82,7 @@ export default function App() {
     holding: false,
     streak: 0,
     score: 0,
-    totalO: 0,
+    totalInhales: 0,
   })
 
   // Init Telegram
@@ -147,9 +150,12 @@ export default function App() {
       setTimer(ROUND_DURATION)
       setStreak(0)
       setMaxStreak(0)
-      setTotalOCount(0)
+      setTotalCount(0)
       setIsO(false)
-      setConfidence(0)
+      setIsSucking(false)
+      setIsActive(false)
+      setOShape(0)
+      setSuction(0)
       setHoldProgress(0)
       stateRef.current = {
         oStartTime: 0,
@@ -157,7 +163,7 @@ export default function App() {
         holding: false,
         streak: 0,
         score: 0,
-        totalO: 0,
+        totalInhales: 0,
       }
 
       setPhase('playing')
@@ -221,9 +227,18 @@ export default function App() {
             if (blendshapes) {
               const detection = detectOMouth(blendshapes)
               setIsO(detection.isO)
-              setConfidence(detection.confidence)
+              setIsSucking(detection.isSucking)
+              setIsActive(detection.active)
+              setOShape(detection.oShape)
+              setSuction(detection.suction)
 
-              if (detection.isO) {
+              // Draw suction particles on canvas
+              if (landmarks) {
+                const mirrored = landmarks.map(l => ({ x: 1 - l.x, y: l.y, z: l.z }))
+                drawSuctionEffect(ctx, mirrored, time, detection.suction)
+              }
+
+              if (detection.active) {
                 if (!stateRef.current.holding) {
                   stateRef.current.holding = true
                   stateRef.current.oStartTime = time
@@ -236,10 +251,10 @@ export default function App() {
                 if (holdTime >= HOLD_THRESHOLD && time - stateRef.current.lastScoreTime > COOLDOWN) {
                   // Score!
                   stateRef.current.lastScoreTime = time
-                  stateRef.current.totalO++
+                  stateRef.current.totalInhales++
                   stateRef.current.streak++
                   const streak = stateRef.current.streak
-                  let points = POINTS_PER_O
+                  let points = POINTS_PER_INHALE
 
                   if (streak >= BONUS_THRESHOLD) {
                     points *= BONUS_MULTIPLIER
@@ -254,7 +269,7 @@ export default function App() {
                   stateRef.current.score += points
                   setScore(stateRef.current.score)
                   setStreak(streak)
-                  setTotalOCount(stateRef.current.totalO)
+                  setTotalCount(stateRef.current.totalInhales)
                   if (streak > stateRef.current.maxStreak) {
                     stateRef.current.maxStreak = streak
                     setMaxStreak(streak)
@@ -340,7 +355,7 @@ export default function App() {
               </div>
             </div>
             <h1 className="title">О-face</h1>
-            <p className="subtitle">Сделай букву <strong>О</strong> ртом и получи очки!</p>
+            <p className="subtitle">Сделай букву <strong>О</strong> ртом и <strong>вдохни</strong> через неё!</p>
 
             <div className="rules-card">
               <div className="rule">
@@ -350,6 +365,10 @@ export default function App() {
               <div className="rule">
                 <span className="rule-icon">😮</span>
                 <span>Сделай букву О губами</span>
+              </div>
+              <div className="rule">
+                <span className="rule-icon">💨</span>
+                <span>Втяни воздух — щёки вжимаются</span>
               </div>
               <div className="rule">
                 <span className="rule-icon">⏱</span>
@@ -409,8 +428,8 @@ export default function App() {
             </div>
             <div className="hud-right">
               <div className="hud-count">
-                <span className="hud-label">О</span>
-                <span className="hud-value">{totalOCount}</span>
+                <span className="hud-label">ВДОХ</span>
+                <span className="hud-value">{totalCount}</span>
               </div>
             </div>
           </div>
@@ -420,13 +439,13 @@ export default function App() {
             <video ref={videoRef} playsInline muted style={{ display: 'none' }} />
             <canvas ref={canvasRef} className="game-canvas" />
 
-            {/* O indicator */}
-            <div className={`o-indicator ${isO ? 'active' : ''}`}>
+            {/* Status indicators */}
+            <div className={`o-indicator ${isActive ? 'active' : ''}`}>
               <div className="o-ring">
                 <svg viewBox="0 0 80 80">
                   <circle cx="40" cy="40" r="36" fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth="4" />
                   <circle cx="40" cy="40" r="36" fill="none"
-                    stroke={isO ? '#4ade80' : '#666'}
+                    stroke={isActive ? '#4ade80' : isO ? '#fbbf24' : '#666'}
                     strokeWidth="4"
                     strokeDasharray={`${(holdProgress / 100) * 2 * Math.PI * 36} ${2 * Math.PI * 36}`}
                     strokeLinecap="round"
@@ -436,15 +455,24 @@ export default function App() {
                 </svg>
                 <span className="o-letter">О</span>
               </div>
-              {isO && <span className="o-label">ДЕРЖИ!</span>}
+              {isActive && <span className="o-label">ВДОХ!</span>}
+              {isO && !isSucking && <span className="o-label warn">ВТЯНИ ВОЗДУХ!</span>}
             </div>
 
-            {/* Confidence bar */}
-            <div className="confidence-bar">
-              <div className="confidence-fill" style={{
-                width: `${confidence}%`,
-                backgroundColor: confidence > 60 ? '#4ade80' : confidence > 30 ? '#fbbf24' : '#666',
-              }} />
+            {/* Two-bar meters: O-shape + Suction */}
+            <div className="dual-meter">
+              <div className="meter">
+                <span className="meter-label">О</span>
+                <div className="meter-bar">
+                  <div className="meter-fill o-fill" style={{ width: `${oShape}%` }} />
+                </div>
+              </div>
+              <div className="meter">
+                <span className="meter-label">💨</span>
+                <div className="meter-bar">
+                  <div className="meter-fill s-fill" style={{ width: `${suction}%` }} />
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -472,8 +500,8 @@ export default function App() {
 
             <div className="result-stats">
               <div className="stat">
-                <span className="stat-value">{totalOCount}</span>
-                <span className="stat-label">букв О</span>
+                <span className="stat-value">{totalCount}</span>
+                <span className="stat-label">вдохов</span>
               </div>
               <div className="stat">
                 <span className="stat-value">{maxStreak}</span>
