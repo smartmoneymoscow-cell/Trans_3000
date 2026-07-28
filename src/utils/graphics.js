@@ -31,11 +31,14 @@ export function drawCar(ctx, canvasW, canvasH, time) {
   const img = images.car
   if (!img) return { x: canvasW * 0.82, y: canvasH * 0.45 }
 
-  const scale = Math.min(canvasW / 500, canvasH / 350) * 0.85
+  // Scale: fit height to 60% of canvas
+  const targetH = canvasH * 0.6
+  const scale = targetH / img.height
   const w = img.width * scale
   const h = img.height * scale
-  const x = canvasW - w + 30
-  const y = canvasH * 0.28
+  // Position: only rear part visible — right edge of car at canvas right edge
+  const x = canvasW - w * 0.35
+  const y = canvasH * 0.2
 
   ctx.save()
   ctx.drawImage(img, x, y, w, h)
@@ -56,7 +59,7 @@ export function drawCar(ctx, canvasW, canvasH, time) {
   ctx.restore()
 
   // Return fuel cap position (approximate on the SVG)
-  const capX = x + w * 0.6
+  const capX = x + w * 0.25  // fuel cap is at 60% of car width, but we show only right portion
   const capY = y + h * 0.54
   return { x: capX, y: capY }
 }
@@ -66,11 +69,13 @@ export function drawCanister(ctx, canvasW, canvasH, fillPct, time) {
   const img = images.canister
   if (!img) return { x: canvasW * 0.15, y: canvasH * 0.5 }
 
-  const scale = Math.min(canvasW / 200, canvasH / 300) * 0.65
+  // Scale canister to fit left side, not overlapping face
+  const targetH = canvasH * 0.35
+  const scale = targetH / img.height
   const w = img.width * scale
   const h = img.height * scale
-  const x = canvasW * 0.04
-  const y = canvasH * 0.32
+  const x = canvasW * 0.02
+  const y = canvasH * 0.45
 
   ctx.save()
   ctx.drawImage(img, x, y, w, h)
