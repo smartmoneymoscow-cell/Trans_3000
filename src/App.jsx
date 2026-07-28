@@ -216,9 +216,10 @@ export default function App() {
         icon: '📱',
         title: 'Камера не поддерживается',
         text: diag.isIOS
-          ? 'Обновите Telegram до последней версии. На старых версиях iOS камера может не работать в мини-приложениях.'
+          ? 'На iPhone камера не работает внутри Telegram. Откройте игру в Safari.'
           : 'Обновите Telegram или попробуйте открыть в браузере Chrome/Safari.',
         canRetry: false,
+        openExternal: diag.isIOS,
       },
       CAMERA_DENIED: {
         icon: '🚫',
@@ -242,7 +243,7 @@ export default function App() {
 
     // Match known errors or use generic
     for (const [key, val] of Object.entries(errors)) {
-      if (errorType === key) return val
+      if (errorType === key) return { ...val, openExternal: val.openExternal ?? diag.isIOS }
     }
 
     return {
@@ -250,6 +251,7 @@ export default function App() {
       title: 'Ошибка камеры',
       text: `Не удалось подключить камеру. Попробуйте обновить Telegram или открыть в браузере.\n\n${errorType}`,
       canRetry: true,
+      openExternal: diag.isIOS,
     }
   }, [])
 
@@ -693,6 +695,14 @@ export default function App() {
                   <div className="error-actions">
                     {err.canRetry && (
                       <button className="btn-play" onClick={startGame}>Попробовать снова</button>
+                    )}
+                    {err.openExternal && (
+                      <button className="btn-play" onClick={() => {
+                        if (tg) tg.openLink(window.location.href)
+                        else window.open(window.location.href, '_blank')
+                      }}>
+                        Открыть в Safari
+                      </button>
                     )}
                     <button className="btn-secondary" onClick={() => { setCameraError(null); setPhase('menu') }}>
                       Назад
