@@ -10,7 +10,7 @@ const tg = window.Telegram?.WebApp
 
 // ── Game config ──
 const ROUND_DURATION = 60
-const HOLD_THRESHOLD = 600
+const HOLD_THRESHOLD = 300
 const CYCLE_CAPACITY = 10 // fill points per transfer cycle (5 strong or 10 weak)
 const STRONG_SUCTION_THRESHOLD = 50 // suction > 50 = strong inhale
 const STRONG_INHALE_VALUE = 2 // strong inhale = 2 fill points
