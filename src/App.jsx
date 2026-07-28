@@ -10,7 +10,7 @@ const tg = window.Telegram?.WebApp
 
 // ── Game config ──
 const ROUND_DURATION = 60
-const HOLD_THRESHOLD = 600
+const HOLD_THRESHOLD = 400
 const CYCLE_CAPACITY = 10
 const STRONG_SUCTION_THRESHOLD = 50
 const STRONG_INHALE_VALUE = 2
@@ -402,10 +402,14 @@ export default function App() {
           const canisterPort = drawCanister(ctx, W, H, canisterPct, time)
           targetsRef.current.canister = canisterPort
 
+          let landmarks = null
+          let blendshapes = null
+          let detection = { isO: false, isSucking: false, active: false, oShape: 0, suction: 0 }
+
           try {
             const result = landmarker.detectForVideo(video, time)
-            const landmarks = result?.faceLandmarks?.[0]
-            const blendshapes = result?.faceBlendshapes?.[0]?.categories
+            landmarks = result?.faceLandmarks?.[0]
+            blendshapes = result?.faceBlendshapes?.[0]?.categories
 
             if (landmarks) {
               const nose = landmarks[1]
@@ -418,7 +422,6 @@ export default function App() {
               }
             }
 
-            let detection = { isO: false, isSucking: false, active: false, oShape: 0, suction: 0 }
             if (blendshapes) {
               detection = detectOMouth(blendshapes)
               setIsO(detection.isO)
@@ -552,7 +555,12 @@ export default function App() {
               }
             }
 
-          } catch (e) { /* skip frame */ }
+          } catch (e) {
+            // Log detection errors for debugging
+            if (e.message && !e.message.includes('detectForVideo')) {
+              console.warn('Game loop error:', e.message)
+            }
+          }
 
           // Floating +points
           const fps = floatingPointsRef.current
@@ -574,6 +582,21 @@ export default function App() {
             ctx.shadowBlur = 0
             ctx.restore()
           }
+
+          // Debug overlay — show detection values
+          ctx.save()
+          ctx.font = 'bold 14px monospace'
+          ctx.textAlign = 'left'
+          ctx.fillStyle = 'rgba(0,0,0,0.6)'
+          ctx.fillRect(8, H - 110, 200, 105)
+          ctx.fillStyle = '#0f0'
+          const dbg = detection || { isO: false, isSucking: false, active: false, oShape: 0, suction: 0 }
+          ctx.fillText(`O-shape: ${dbg.isO ? 'YES' : 'no'} (${dbg.oShape}%)`, 14, H - 90)
+          ctx.fillText(`Suction: ${dbg.isSucking ? 'YES' : 'no'} (${dbg.suction}%)`, 14, H - 72)
+          ctx.fillText(`Active: ${dbg.active ? 'YES' : 'no'}`, 14, H - 54)
+          ctx.fillText(`Face: ${landmarks ? 'OK' : 'NONE'}`, 14, H - 36)
+          ctx.fillText(`Blendshapes: ${blendshapes ? blendshapes.length : 0}`, 14, H - 18)
+          ctx.restore()
 
           // Cycle state label
           if (gs.current.cycleState !== 'sucking') {

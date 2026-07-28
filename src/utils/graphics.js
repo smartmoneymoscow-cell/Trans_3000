@@ -31,11 +31,14 @@ export function drawCar(ctx, canvasW, canvasH, time) {
   const img = images.car
   if (!img) return { x: canvasW * 0.82, y: canvasH * 0.45 }
 
-  const scale = Math.min(canvasW / 500, canvasH / 350) * 0.85
+  // Scale car to fit right side, cropped — show rear quarter only
+  const targetH = canvasH * 0.65
+  const scale = targetH / img.height
   const w = img.width * scale
   const h = img.height * scale
-  const x = canvasW - w + 30
-  const y = canvasH * 0.28
+  // Position: right edge of car at canvas right edge + small overflow
+  const x = canvasW - w * 0.65
+  const y = canvasH * 0.18
 
   ctx.save()
   ctx.drawImage(img, x, y, w, h)
@@ -66,11 +69,14 @@ export function drawCanister(ctx, canvasW, canvasH, fillPct, time) {
   const img = images.canister
   if (!img) return { x: canvasW * 0.15, y: canvasH * 0.5 }
 
-  const scale = Math.min(canvasW / 200, canvasH / 300) * 0.65
+  // Scale canister to be visible but not overlapping face
+  const targetH = canvasH * 0.35
+  const scale = targetH / img.height
   const w = img.width * scale
   const h = img.height * scale
-  const x = canvasW * 0.04
-  const y = canvasH * 0.32
+  // Position: left side, below center
+  const x = canvasW * 0.02
+  const y = canvasH * 0.45
 
   ctx.save()
   ctx.drawImage(img, x, y, w, h)
