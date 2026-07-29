@@ -31,36 +31,46 @@ export function drawCar(ctx, canvasW, canvasH, time) {
   const img = images.car
   if (!img) return { x: canvasW * 0.82, y: canvasH * 0.45 }
 
-  // Scale: car height = 70% of canvas
-  const targetH = canvasH * 0.7
+  // Scale: car height = 75% of canvas
+  const targetH = canvasH * 0.75
   const scale = targetH / img.height
   const w = img.width * scale
   const h = img.height * scale
-  // Position: right edge of car at canvas right edge, show right portion only
-  const x = canvasW - w * 0.45
-  const y = canvasH * 0.15
+  // Position: right portion of car visible, fuel cap area accessible
+  const x = canvasW - w * 0.5
+  const y = canvasH * 0.12
 
   ctx.save()
   ctx.drawImage(img, x, y, w, h)
 
   // Animated headlight glow
-  const glowAlpha = 0.15 + Math.sin(time * 0.002) * 0.08
-  const hlX = x + w * 0.94
-  const hlY1 = y + h * 0.52
-  const hlY2 = y + h * 0.67
-  const grad = ctx.createRadialGradient(hlX, hlY1, 0, hlX, hlY1, 30)
-  grad.addColorStop(0, `rgba(255, 240, 200, ${glowAlpha})`)
+  const glowAlpha = 0.2 + Math.sin(time * 0.002) * 0.1
+  const hlX = x + w * 0.97
+  const hlY1 = y + h * 0.53
+  const grad = ctx.createRadialGradient(hlX, hlY1, 0, hlX, hlY1, 40)
+  grad.addColorStop(0, `rgba(255, 245, 220, ${glowAlpha})`)
   grad.addColorStop(1, 'transparent')
   ctx.fillStyle = grad
   ctx.beginPath()
-  ctx.arc(hlX, hlY1, 30, 0, Math.PI * 2)
+  ctx.arc(hlX, hlY1, 40, 0, Math.PI * 2)
+  ctx.fill()
+
+  // Taillight glow (red)
+  const tlX = x + w * 0.04
+  const tlY = y + h * 0.52
+  const tailGrad = ctx.createRadialGradient(tlX, tlY, 0, tlX, tlY, 25)
+  tailGrad.addColorStop(0, `rgba(255, 40, 40, ${0.15 + Math.sin(time * 0.003) * 0.05})`)
+  tailGrad.addColorStop(1, 'transparent')
+  ctx.fillStyle = tailGrad
+  ctx.beginPath()
+  ctx.arc(tlX, tlY, 25, 0, Math.PI * 2)
   ctx.fill()
 
   ctx.restore()
 
-  // Return fuel cap position (60% across the car from left = 40% from right)
-  const capX = x + w * 0.6
-  const capY = y + h * 0.54
+  // Return fuel cap position (right rear fender area)
+  const capX = x + w * 0.68
+  const capY = y + h * 0.55
   return { x: capX, y: capY }
 }
 
@@ -69,40 +79,40 @@ export function drawCanister(ctx, canvasW, canvasH, fillPct, time) {
   const img = images.canister
   if (!img) return { x: canvasW * 0.15, y: canvasH * 0.5 }
 
-  // Scale canister to fit left side, not overlapping face
-  const targetH = canvasH * 0.35
+  // Scale canister to fit left side
+  const targetH = canvasH * 0.38
   const scale = targetH / img.height
   const w = img.width * scale
   const h = img.height * scale
-  const x = canvasW * 0.02
-  const y = canvasH * 0.45
+  const x = canvasW * 0.01
+  const y = canvasH * 0.42
 
   ctx.save()
   ctx.drawImage(img, x, y, w, h)
 
   // ── Animated fluid level overlay ──
   if (fillPct > 0) {
-    const fluidTop = y + h * 0.78 - (fillPct / 100) * h * 0.6
-    const fluidBottom = y + h * 0.88
-    const fluidLeft = x + w * 0.22
-    const fluidWidth = w * 0.56
+    const fluidTop = y + h * 0.82 - (fillPct / 100) * h * 0.62
+    const fluidBottom = y + h * 0.9
+    const fluidLeft = x + w * 0.26
+    const fluidWidth = w * 0.48
 
     ctx.save()
     // Clip to canister body area
     ctx.beginPath()
-    ctx.rect(x + w * 0.18, y + h * 0.2, fluidWidth, h * 0.72)
+    ctx.rect(x + w * 0.22, y + h * 0.2, fluidWidth + w * 0.04, h * 0.74)
     ctx.clip()
 
     // Fluid fill
     const fluidGrad = ctx.createLinearGradient(0, fluidTop, 0, fluidBottom)
-    fluidGrad.addColorStop(0, 'rgba(255, 200, 50, 0.6)')
-    fluidGrad.addColorStop(0.5, 'rgba(220, 160, 30, 0.7)')
-    fluidGrad.addColorStop(1, 'rgba(180, 120, 20, 0.8)')
+    fluidGrad.addColorStop(0, 'rgba(255, 210, 60, 0.65)')
+    fluidGrad.addColorStop(0.5, 'rgba(240, 180, 40, 0.75)')
+    fluidGrad.addColorStop(1, 'rgba(200, 140, 25, 0.85)')
     ctx.fillStyle = fluidGrad
     ctx.fillRect(fluidLeft, fluidTop, fluidWidth, fluidBottom - fluidTop)
 
     // Wave on fluid surface
-    ctx.fillStyle = 'rgba(255, 220, 80, 0.4)'
+    ctx.fillStyle = 'rgba(255, 225, 80, 0.45)'
     ctx.beginPath()
     ctx.moveTo(fluidLeft, fluidTop)
     for (let px = 0; px < fluidWidth; px += 2) {
@@ -114,27 +124,38 @@ export function drawCanister(ctx, canvasW, canvasH, fillPct, time) {
     ctx.closePath()
     ctx.fill()
 
+    // Bubbles
+    for (let i = 0; i < 4; i++) {
+      const bx = fluidLeft + fluidWidth * 0.2 + (i * fluidWidth * 0.2)
+      const by = fluidBottom - ((time * 0.03 + i * 50) % (fluidBottom - fluidTop))
+      const br = 1.5 + Math.sin(time * 0.005 + i) * 0.5
+      ctx.beginPath()
+      ctx.arc(bx, by, br, 0, Math.PI * 2)
+      ctx.fillStyle = 'rgba(255, 240, 150, 0.4)'
+      ctx.fill()
+    }
+
     ctx.restore()
   }
 
   // Fluid level indicator strip (left side of canister)
   const stripX = x + w * 0.2
-  const stripTop = y + h * 0.23
-  const stripH = h * 0.6
-  const stripW = w * 0.04
+  const stripTop = y + h * 0.22
+  const stripH = h * 0.62
+  const stripW = w * 0.05
 
   // Fill indicator on strip
   if (fillPct > 0) {
     const fillH = (fillPct / 100) * stripH
-    ctx.fillStyle = 'rgba(255, 200, 50, 0.6)'
+    ctx.fillStyle = 'rgba(255, 210, 60, 0.7)'
     ctx.fillRect(stripX, stripTop + stripH - fillH, stripW, fillH)
   }
 
   ctx.restore()
 
   // Return nozzle port position (right side of canister)
-  const nozzleX = x + w * 0.86
-  const nozzleY = y + h * 0.39
+  const nozzleX = x + w * 0.95
+  const nozzleY = y + h * 0.4
   return { x: nozzleX, y: nozzleY }
 }
 
@@ -169,40 +190,51 @@ export function drawAnimatedHose(ctx, landmarks, time, state, suctionStrength, t
   let hoseEnd, hoseStart
 
   if (state === 'mouth') {
-    hoseEnd = { x: mouthCx + tiltInfluence + 80, y: mouthCy + H * 0.25 }
+    // Hose goes from mouth to car fuel cap (right side)
     hoseStart = mouthPos
+    hoseEnd = carPos
   } else if (state === 'disconnecting') {
+    // Hose swings from car fuel cap to canister
     const t = (Math.sin(time * 0.003) + 1) / 2
-    hoseEnd = {
-      x: mouthCx + (canisterPos.x - mouthCx) * t,
-      y: mouthCy + (canisterPos.y - mouthCy) * t,
-    }
     hoseStart = {
-      x: mouthPos.x + (canisterPos.x - mouthPos.x) * (t * 0.3),
-      y: mouthPos.y + (canisterPos.y - mouthPos.y) * (t * 0.3),
+      x: carPos.x + (canisterPos.x - carPos.x) * t,
+      y: carPos.y + (canisterPos.y - carPos.y) * t,
+    }
+    hoseEnd = {
+      x: carPos.x + (canisterPos.x - carPos.x) * (t * 0.7),
+      y: carPos.y + (canisterPos.y - carPos.y) * (t * 0.7),
     }
   } else if (state === 'transferring') {
     hoseStart = { x: canisterPos.x - 20, y: canisterPos.y - 10 }
     hoseEnd = { x: canisterPos.x + 15, y: canisterPos.y }
   } else if (state === 'reconnecting') {
+    // Hose swings back from canister to car fuel cap
     const t = (Math.sin(time * 0.003 + Math.PI) + 1) / 2
-    hoseEnd = {
-      x: canisterPos.x + (mouthCx - canisterPos.x) * t,
-      y: canisterPos.y + (mouthCy - canisterPos.y) * t,
-    }
     hoseStart = {
-      x: canisterPos.x + (mouthPos.x - canisterPos.x) * (t * 0.3),
-      y: canisterPos.y + (mouthPos.y - canisterPos.y) * (t * 0.3),
+      x: canisterPos.x + (carPos.x - canisterPos.x) * t,
+      y: canisterPos.y + (carPos.y - canisterPos.y) * t,
+    }
+    hoseEnd = {
+      x: canisterPos.x + (carPos.x - canisterPos.x) * (t * 0.7),
+      y: canisterPos.y + (carPos.y - canisterPos.y) * (t * 0.7),
     }
   }
 
   const midX = (hoseStart.x + hoseEnd.x) / 2
   const midY = (hoseStart.y + hoseEnd.y) / 2
-  const sag = 40 + Math.sin(time * 0.001) * 5
+  const sag = 30 + Math.sin(time * 0.001) * 5
+
+  // Dynamic control points based on hose direction
+  const dx = hoseEnd.x - hoseStart.x
+  const dy = hoseEnd.y - hoseStart.y
+  const hoseLen = Math.sqrt(dx * dx + dy * dy)
+  // Perpendicular offset for natural curve
+  const perpX = -dy / hoseLen * sag
+  const perpY = dx / hoseLen * sag
 
   const p0x = hoseStart.x, p0y = hoseStart.y
-  const p1x = midX - 30, p1y = midY + sag
-  const p2x = midX + 30, p2y = midY + sag * 0.8
+  const p1x = midX + perpX * 0.6, p1y = midY + perpY * 0.6 + sag * 0.5
+  const p2x = midX + perpX * 0.3, p2y = midY + perpY * 0.3 + sag * 0.4
   const p3x = hoseEnd.x, p3y = hoseEnd.y
 
   ctx.save()
@@ -274,48 +306,6 @@ export function drawAnimatedHose(ctx, landmarks, time, state, suctionStrength, t
 
   ctx.restore()
   return { p0x, p0y, p3x, p3y }
-}
-
-// ── Suction effect (particles into mouth) ──
-export function drawSuctionEffect(ctx, landmarks, time, suctionStrength) {
-  if (!landmarks || landmarks.length < 478 || suctionStrength < 5) return
-
-  const upperLip = landmarks[13]
-  const lowerLip = landmarks[14]
-  if (!upperLip || !lowerLip) return
-
-  const cx = ((upperLip.x + lowerLip.x) / 2) * ctx.canvas.width
-  const cy = ((upperLip.y + lowerLip.y) / 2) * ctx.canvas.height
-  const numParticles = Math.floor(suctionStrength / 10) + 3
-  const strength = suctionStrength / 100
-
-  for (let i = 0; i < numParticles; i++) {
-    const angle = (time * 0.002 + i * (Math.PI * 2 / numParticles)) % (Math.PI * 2)
-    const radius = 40 + (1 - strength) * 60 + Math.sin(time * 0.003 + i) * 15
-    const px = cx + Math.cos(angle) * radius
-    const py = cy + Math.sin(angle) * radius
-    const progress = ((time * 0.003 + i * 0.5) % 1)
-    const x = px + (cx - px) * progress
-    const y = py + (cy - py) * progress
-    const alpha = (1 - progress) * strength * 0.6
-    const size = 2 + (1 - progress) * 3
-
-    ctx.beginPath()
-    ctx.arc(x, y, size, 0, Math.PI * 2)
-    ctx.fillStyle = `rgba(100, 200, 255, ${alpha})`
-    ctx.fill()
-  }
-
-  if (suctionStrength > 30) {
-    const glowR = 25 + strength * 20
-    const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, glowR)
-    grad.addColorStop(0, `rgba(100, 200, 255, ${strength * 0.15})`)
-    grad.addColorStop(1, 'transparent')
-    ctx.fillStyle = grad
-    ctx.beginPath()
-    ctx.arc(cx, cy, glowR, 0, Math.PI * 2)
-    ctx.fill()
-  }
 }
 
 // ── Sound effects ──

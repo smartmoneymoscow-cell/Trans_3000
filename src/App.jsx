@@ -10,10 +10,10 @@ const tg = window.Telegram?.WebApp
 
 // ── Game config ──
 const ROUND_DURATION = 60
-const HOLD_THRESHOLD = 300
-const CYCLE_CAPACITY = 10 // fill points per transfer cycle (5 strong or 10 weak)
-const STRONG_SUCTION_THRESHOLD = 50 // suction > 50 = strong inhale
-const STRONG_INHALE_VALUE = 2 // strong inhale = 2 fill points
+const HOLD_THRESHOLD = 150
+const CYCLE_CAPACITY = 10 // fill points per transfer cycle
+const STRONG_SUCTION_THRESHOLD = 35 // lowered from 50
+const STRONG_INHALE_VALUE = 3 // strong inhale = 3 fill points
 const WEAK_INHALE_VALUE = 1 // weak inhale = 1 fill point
 const CANISTER_CYCLES = 4 // transfers needed to fill the big canister
 const TRANSFER_DURATION = 3000 // ms for fluid transfer animation
@@ -541,7 +541,7 @@ export default function App() {
           {/* Top hint bar */}
           <div className="hint-bar">
             {hoseState === 'mouth'
-              ? '😮 ВТЯГИВАЙ БЕНЗИН РТОМ, ЧТОБЫ ЗАПОЛНИТЬ КАНИСТРУ!'
+              ? '👄 ВТЯГИВАЙ БЕНЗИН РТОМ, ЧТОБЫ ЗАПОЛНИТЬ КАНИСТРУ!'
               : hoseState === 'transferring'
                 ? '⛽ ПЕРЕЛИВ БЕНЗИНА В КАНИСТРУ...'
                 : '↩️ ПОДКЛЮЧЕНИЕ ШЛАНГА...'
