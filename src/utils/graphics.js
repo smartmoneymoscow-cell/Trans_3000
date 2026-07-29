@@ -160,6 +160,7 @@ export function drawCanister(ctx, canvasW, canvasH, fillPct, time) {
 }
 
 // ── Animated hose with state machine ──
+// Hose routing: Car fuel cap (right) → Mouth (center) → Canister (left)
 export function drawAnimatedHose(ctx, landmarks, time, state, suctionStrength, targets) {
   if (!landmarks || landmarks.length < 478) return
 
@@ -168,144 +169,161 @@ export function drawAnimatedHose(ctx, landmarks, time, state, suctionStrength, t
 
   const upperLip = landmarks[13]
   const lowerLip = landmarks[14]
-  const noseTip = landmarks[1]
-  const chin = landmarks[152]
-  if (!upperLip || !lowerLip || !chin) return
+  if (!upperLip || !lowerLip) return
 
   const mouthCx = ((upperLip.x + lowerLip.x) / 2) * W
   const mouthCy = ((upperLip.y + lowerLip.y) / 2) * H
-  const noseX = noseTip.x * W
-  const noseY = noseTip.y * H
-  const chinX = chin.x * W
-  const chinY = chin.y * H
-
-  const headAngle = Math.atan2(chinY - noseY, chinX - noseX)
-  const tiltInfluence = Math.sin(headAngle) * H * 0.12
-  const hoseRadius = 12
-
   const mouthPos = { x: mouthCx, y: mouthCy }
+
   const carPos = targets.car || { x: W * 0.82, y: H * 0.45 }
   const canisterPos = targets.canister || { x: W * 0.15, y: H * 0.48 }
 
-  let hoseEnd, hoseStart
+  const hoseRadius = 10
+
+  // ── Determine segments based on state ──
+  let segments = []
 
   if (state === 'mouth') {
-    // Hose goes from mouth to car fuel cap (right side)
-    hoseStart = mouthPos
-    hoseEnd = carPos
+    // Full path: car fuel cap → mouth → canister
+    segments = [
+      { start: carPos, end: mouthPos },
+      { start: mouthPos, end: canisterPos },
+    ]
   } else if (state === 'disconnecting') {
-    // Hose swings from car fuel cap to canister
-    const t = (Math.sin(time * 0.003) + 1) / 2
-    hoseStart = {
-      x: carPos.x + (canisterPos.x - carPos.x) * t,
-      y: carPos.y + (canisterPos.y - carPos.y) * t,
+    // Hose detaching from mouth, swinging toward canister
+    const t = Math.min(1, (time % 3000) / 3000)
+    const eased = t * t * (3 - 2 * t)
+    const midPoint = {
+      x: mouthPos.x + (canisterPos.x - mouthPos.x) * eased,
+      y: mouthPos.y + (canisterPos.y - mouthPos.y) * eased,
     }
-    hoseEnd = {
-      x: carPos.x + (canisterPos.x - carPos.x) * (t * 0.7),
-      y: carPos.y + (canisterPos.y - carPos.y) * (t * 0.7),
-    }
+    segments = [
+      { start: carPos, end: midPoint },
+    ]
   } else if (state === 'transferring') {
-    hoseStart = { x: canisterPos.x - 20, y: canisterPos.y - 10 }
-    hoseEnd = { x: canisterPos.x + 15, y: canisterPos.y }
+    // Hose at canister, transferring fuel
+    segments = [
+      { start: { x: canisterPos.x - 30, y: canisterPos.y - 20 }, end: canisterPos },
+    ]
   } else if (state === 'reconnecting') {
-    // Hose swings back from canister to car fuel cap
-    const t = (Math.sin(time * 0.003 + Math.PI) + 1) / 2
-    hoseStart = {
-      x: canisterPos.x + (carPos.x - canisterPos.x) * t,
-      y: canisterPos.y + (carPos.y - canisterPos.y) * t,
+    // Hose swinging back from canister to mouth
+    const t = Math.min(1, (time % 3000) / 3000)
+    const eased = t * t * (3 - 2 * t)
+    const midPoint = {
+      x: canisterPos.x + (mouthPos.x - canisterPos.x) * eased,
+      y: canisterPos.y + (mouthPos.y - canisterPos.y) * eased,
     }
-    hoseEnd = {
-      x: canisterPos.x + (carPos.x - canisterPos.x) * (t * 0.7),
-      y: canisterPos.y + (carPos.y - canisterPos.y) * (t * 0.7),
-    }
+    segments = [
+      { start: midPoint, end: canisterPos },
+      { start: midPoint, end: carPos },
+    ]
   }
 
-  const midX = (hoseStart.x + hoseEnd.x) / 2
-  const midY = (hoseStart.y + hoseEnd.y) / 2
-  const sag = 30 + Math.sin(time * 0.001) * 5
-
-  // Dynamic control points based on hose direction
-  const dx = hoseEnd.x - hoseStart.x
-  const dy = hoseEnd.y - hoseStart.y
-  const hoseLen = Math.sqrt(dx * dx + dy * dy)
-  // Perpendicular offset for natural curve
-  const perpX = -dy / hoseLen * sag
-  const perpY = dx / hoseLen * sag
-
-  const p0x = hoseStart.x, p0y = hoseStart.y
-  const p1x = midX + perpX * 0.6, p1y = midY + perpY * 0.6 + sag * 0.5
-  const p2x = midX + perpX * 0.3, p2y = midY + perpY * 0.3 + sag * 0.4
-  const p3x = hoseEnd.x, p3y = hoseEnd.y
-
+  // ── Draw each segment ──
   ctx.save()
   ctx.lineCap = 'round'
 
-  // Outer shadow
-  ctx.beginPath()
-  ctx.moveTo(p0x, p0y)
-  ctx.bezierCurveTo(p1x, p1y, p2x, p2y, p3x, p3y)
-  ctx.strokeStyle = 'rgba(0,0,0,0.5)'
-  ctx.lineWidth = hoseRadius * 2 + 6
-  ctx.stroke()
+  for (const seg of segments) {
+    const p0x = seg.start.x, p0y = seg.start.y
+    const p3x = seg.end.x, p3y = seg.end.y
 
-  // Main body
-  ctx.beginPath()
-  ctx.moveTo(p0x, p0y)
-  ctx.bezierCurveTo(p1x, p1y, p2x, p2y, p3x, p3y)
-  ctx.strokeStyle = '#1a1a1a'
-  ctx.lineWidth = hoseRadius * 2
-  ctx.stroke()
+    // Bezier with natural sag
+    const dx = p3x - p0x
+    const dy = p3y - p0y
+    const len = Math.sqrt(dx * dx + dy * dy) || 1
+    const sag = 25 + Math.sin(time * 0.001) * 4
 
-  // Highlight
-  ctx.beginPath()
-  ctx.moveTo(p0x, p0y)
-  ctx.bezierCurveTo(p1x, p1y, p2x, p2y, p3x, p3y)
-  ctx.strokeStyle = 'rgba(255,255,255,0.07)'
-  ctx.lineWidth = hoseRadius * 0.7
-  ctx.stroke()
+    // Perpendicular direction for curve
+    const perpX = -dy / len * sag
+    const perpY = dx / len * sag
 
-  // Connectors
-  for (const [cx, cy] of [[p0x, p0y], [p3x, p3y]]) {
+    const midX = (p0x + p3x) / 2
+    const midY = (p0y + p3y) / 2
+
+    const p1x = midX + perpX * 0.4
+    const p1y = midY + perpY * 0.4 + sag * 0.6
+    const p2x = midX + perpX * 0.2
+    const p2y = midY + perpY * 0.2 + sag * 0.5
+
+    // Outer shadow
     ctx.beginPath()
-    ctx.arc(cx, cy, hoseRadius + 4, 0, Math.PI * 2)
-    ctx.fillStyle = '#2a2a2a'
-    ctx.fill()
-    ctx.strokeStyle = 'rgba(255,255,255,0.1)'
-    ctx.lineWidth = 1.5
+    ctx.moveTo(p0x, p0y)
+    ctx.bezierCurveTo(p1x, p1y, p2x, p2y, p3x, p3y)
+    ctx.strokeStyle = 'rgba(0,0,0,0.5)'
+    ctx.lineWidth = hoseRadius * 2 + 5
     ctx.stroke()
-  }
-  ctx.beginPath()
-  ctx.arc(p0x, p0y, hoseRadius - 3, 0, Math.PI * 2)
-  ctx.fillStyle = '#0a0a0a'
-  ctx.fill()
 
-  // Particles
-  if (suctionStrength > 5 || state === 'transferring') {
-    const numP = state === 'transferring' ? 15 : Math.floor(suctionStrength / 8) + 3
-    const speed = state === 'transferring' ? 0.0008 : 0.0005 + (suctionStrength / 100) * 0.001
+    // Main body (dark rubber)
+    ctx.beginPath()
+    ctx.moveTo(p0x, p0y)
+    ctx.bezierCurveTo(p1x, p1y, p2x, p2y, p3x, p3y)
+    ctx.strokeStyle = '#1a1a1a'
+    ctx.lineWidth = hoseRadius * 2
+    ctx.stroke()
 
-    for (let i = 0; i < numP; i++) {
-      const t = ((time * speed + i / numP) % 1)
-      const t2 = t * t, t3 = t2 * t, mt = 1 - t, mt2 = mt * mt, mt3 = mt2 * mt
-      const px = mt3 * p0x + 3 * mt2 * t * p1x + 3 * mt * t2 * p2x + t3 * p3x
-      const py = mt3 * p0y + 3 * mt2 * t * p1y + 3 * mt * t2 * p2y + t3 * p3y
-      const offX = Math.sin(time * 0.005 + i * 2) * hoseRadius * 0.3
-      const offY = Math.cos(time * 0.004 + i * 1.5) * hoseRadius * 0.25
-      const alpha = Math.sin(t * Math.PI) * 0.7
-      const size = state === 'transferring' ? 2.5 + (1 - t) * 2 : 1.5 + (1 - t) * 2.5
-      const color = state === 'transferring'
-        ? `rgba(255, 200, 50, ${alpha})`
-        : `rgba(140, 200, 255, ${alpha})`
+    // Highlight stripe
+    ctx.beginPath()
+    ctx.moveTo(p0x, p0y)
+    ctx.bezierCurveTo(p1x, p1y, p2x, p2y, p3x, p3y)
+    ctx.strokeStyle = 'rgba(255,255,255,0.07)'
+    ctx.lineWidth = hoseRadius * 0.6
+    ctx.stroke()
 
+    // Connectors at both ends
+    for (const [cx, cy] of [[p0x, p0y], [p3x, p3y]]) {
       ctx.beginPath()
-      ctx.arc(px + offX, py + offY, size, 0, Math.PI * 2)
-      ctx.fillStyle = color
+      ctx.arc(cx, cy, hoseRadius + 3, 0, Math.PI * 2)
+      ctx.fillStyle = '#2a2a2a'
       ctx.fill()
+      ctx.strokeStyle = 'rgba(255,255,255,0.1)'
+      ctx.lineWidth = 1.5
+      ctx.stroke()
+    }
+    // Inner hole at start
+    ctx.beginPath()
+    ctx.arc(p0x, p0y, hoseRadius - 2, 0, Math.PI * 2)
+    ctx.fillStyle = '#0a0a0a'
+    ctx.fill()
+
+    // ── Particles flowing through hose ──
+    if (suctionStrength > 3 || state === 'transferring') {
+      const numP = state === 'transferring' ? 12 : Math.floor(suctionStrength / 8) + 2
+      const speed = state === 'transferring' ? 0.0008 : 0.0005 + (suctionStrength / 100) * 0.001
+
+      for (let i = 0; i < numP; i++) {
+        const t = ((time * speed + i / numP) % 1)
+        const t2 = t * t, t3 = t2 * t, mt = 1 - t, mt2 = mt * mt, mt3 = mt2 * mt
+        const px = mt3 * p0x + 3 * mt2 * t * p1x + 3 * mt * t2 * p2x + t3 * p3x
+        const py = mt3 * p0y + 3 * mt2 * t * p1y + 3 * mt * t2 * p2y + t3 * p3y
+        const offX = Math.sin(time * 0.005 + i * 2) * hoseRadius * 0.3
+        const offY = Math.cos(time * 0.004 + i * 1.5) * hoseRadius * 0.25
+        const alpha = Math.sin(t * Math.PI) * 0.6
+        const size = state === 'transferring' ? 2.5 + (1 - t) * 2 : 1.5 + (1 - t) * 2
+        const color = state === 'transferring'
+          ? `rgba(255, 200, 50, ${alpha})`
+          : `rgba(140, 200, 255, ${alpha})`
+
+        ctx.beginPath()
+        ctx.arc(px + offX, py + offY, size, 0, Math.PI * 2)
+        ctx.fillStyle = color
+        ctx.fill()
+      }
     }
   }
 
+  // Glow at mouth when sucking
+  if (suctionStrength > 20 && state === 'mouth') {
+    const glowR = 20 + (suctionStrength / 100) * 15
+    const grad = ctx.createRadialGradient(mouthCx, mouthCy, 0, mouthCx, mouthCy, glowR)
+    grad.addColorStop(0, `rgba(100, 200, 255, ${(suctionStrength / 100) * 0.15})`)
+    grad.addColorStop(1, 'transparent')
+    ctx.fillStyle = grad
+    ctx.beginPath()
+    ctx.arc(mouthCx, mouthCy, glowR, 0, Math.PI * 2)
+    ctx.fill()
+  }
+
   ctx.restore()
-  return { p0x, p0y, p3x, p3y }
 }
 
 // ── Sound effects ──
